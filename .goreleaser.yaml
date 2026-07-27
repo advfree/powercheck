@@ -1,0 +1,80 @@
+version: 2
+
+project_name: powercheck
+
+builds:
+  - id: powercheck-sim
+    main: ./cmd/powercheck-sim
+    binary: powercheck-sim
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X powercheck/internal/buildinfo.Version={{ .Version }}
+        -X powercheck/internal/buildinfo.Commit={{ .Commit }}
+        -X powercheck/internal/buildinfo.Date={{ .Date }}
+
+  - id: powercheck-dryrun
+    main: ./cmd/powercheck-dryrun
+    binary: powercheck-dryrun
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X powercheck/internal/buildinfo.Version={{ .Version }}
+        -X powercheck/internal/buildinfo.Commit={{ .Commit }}
+        -X powercheck/internal/buildinfo.Date={{ .Date }}
+
+archives:
+  - id: powercheck
+    ids:
+      - powercheck-sim
+      - powercheck-dryrun
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - PVE_POWER_V0.1_REQUIREMENTS.md
+      - powercheck.example.json
+      - powercheck-dryrun.example.json
+      - scripts/install.sh
+      - scenarios/*.json
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  draft: false
+  prerelease: auto
+  extra_files:
+    - glob: ./scripts/install.sh
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+

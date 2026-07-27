@@ -1,0 +1,23 @@
+{
+  "mode": "dry-run",
+  "interval_seconds": 5,
+  "nut_confirm_seconds": 30,
+  "network_confirm_seconds": 60,
+  "total_budget_seconds": 300,
+  "emergency_reserve_seconds": 60,
+  "recovery_success_count": 3,
+  "round_timeout_seconds": 3,
+  "ping_timeout_seconds": 2,
+  "pve_command_timeout_seconds": 3,
+  "guest_shutdown_timeout_seconds": 180,
+  "pve_node": "pve",
+  "nut_target": "ups@192.168.1.10",
+  "lan_targets": [
+    "192.168.1.1",
+    "192.168.1.10"
+  ],
+  "wan_targets": [
+    "223.5.5.5",
+    "1.1.1.1"
+  ]
+}

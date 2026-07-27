@@ -1,0 +1,15 @@
+{
+  "name": "WAN only failure",
+  "description": "NUT 和内网正常，只有外网不可达，不触发关机。",
+  "duration_seconds": 90,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "OL",
+      "lan_reachable": true,
+      "wan_reachable": false,
+      "all_guests_stopped": false
+    }
+  ],
+  "expected_actions": []
+}

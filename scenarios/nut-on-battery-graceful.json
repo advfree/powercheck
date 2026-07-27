@@ -1,0 +1,32 @@
+{
+  "name": "NUT on battery and guests stop gracefully",
+  "description": "NUT 持续报告 OB；T+30 确认停电，Guest 在 T+100 全部退出后关闭宿主机。",
+  "duration_seconds": 120,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "OB",
+      "lan_reachable": true,
+      "wan_reachable": true,
+      "all_guests_stopped": false
+    },
+    {
+      "at_seconds": 100,
+      "all_guests_stopped": true
+    }
+  ],
+  "expected_actions": [
+    {
+      "at_seconds": 0,
+      "kind": "outage_candidate_started"
+    },
+    {
+      "at_seconds": 30,
+      "kind": "graceful_shutdown"
+    },
+    {
+      "at_seconds": 100,
+      "kind": "host_poweroff_requested"
+    }
+  ]
+}

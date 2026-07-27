@@ -1,0 +1,28 @@
+# Go build output
+dist/
+bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Web dependencies and generated output
+web-prototype/node_modules/
+web-prototype/dist/
+web-prototype/.chrome-qa-profile*/
+web-prototype/vite*.log
+web-prototype/qa-*.png
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+*.local
+powercheck-state.json
+

@@ -1,0 +1,8 @@
+{
+  "interval_seconds": 5,
+  "nut_confirm_seconds": 30,
+  "network_confirm_seconds": 60,
+  "total_budget_seconds": 300,
+  "emergency_reserve_seconds": 60,
+  "recovery_success_count": 3
+}

@@ -1,0 +1,93 @@
+{
+  "name": "fake PVE force remaining stuck guest",
+  "description": "业务 VM 正常退出，TrueNAS 卡住；T+240 只强停仍未关闭的 TrueNAS，然后请求正常关闭宿主机。",
+  "duration_seconds": 250,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "UNREACHABLE",
+      "lan_reachable": false,
+      "wan_reachable": false
+    }
+  ],
+  "fake_pve": {
+    "guests": [
+      {
+        "id": 100,
+        "name": "app",
+        "kind": "vm",
+        "shutdown_order": 10,
+        "agent_enabled": true,
+        "graceful_result": "stopped",
+        "graceful_delay_seconds": 20
+      },
+      {
+        "id": 300,
+        "name": "truenas",
+        "kind": "vm",
+        "shutdown_order": 100,
+        "agent_enabled": true,
+        "graceful_result": "stuck",
+        "emergency_force_result": "stopped"
+      }
+    ]
+  },
+  "expected_actions": [
+    {
+      "at_seconds": 0,
+      "kind": "outage_candidate_started"
+    },
+    {
+      "at_seconds": 60,
+      "kind": "graceful_shutdown"
+    },
+    {
+      "at_seconds": 240,
+      "kind": "emergency_stop_remaining"
+    },
+    {
+      "at_seconds": 240,
+      "kind": "host_poweroff_requested"
+    }
+  ],
+  "expected_pve_events": [
+    {
+      "at_seconds": 60,
+      "kind": "pvenode_stopall",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 60,
+      "kind": "guest_shutdown_requested",
+      "guest_id": 100,
+      "method": "qemu_guest_agent",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 60,
+      "kind": "guest_shutdown_requested",
+      "guest_id": 300,
+      "method": "qemu_guest_agent",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 80,
+      "kind": "guest_stopped",
+      "guest_id": 100,
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 240,
+      "kind": "guest_emergency_force",
+      "guest_id": 300,
+      "command": "qm stop 300",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 240,
+      "kind": "host_poweroff",
+      "command": "systemctl poweroff",
+      "outcome": "success"
+    }
+  ]
+}
