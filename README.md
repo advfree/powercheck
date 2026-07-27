@@ -132,7 +132,7 @@ Go 测试、Web 构建、浏览器交互测试和发布配置校验。推送形�
 Linux 首次安装最新 Release：
 
 ```bash
-curl -fsSL https://github.com/advfree/powercheck/releases/latest/download/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/advfree/powercheck/main/scripts/install.sh | sudo sh
 ```
 
 以后更新：
@@ -148,7 +148,7 @@ sudo powercheck-update
 固定安装某个版本：
 
 ```bash
-sudo POWERCHECK_VERSION=v0.1.0 powercheck-update
+sudo POWERCHECK_VERSION=v0.1.0-alpha.2 powercheck-update
 ```
 
 ## 场景文件

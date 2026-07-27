@@ -51,7 +51,9 @@ case "$(uname -m)" in
 esac
 
 if [ "$REQUESTED_VERSION" = "latest" ]; then
-  release_json="$(github_get "https://api.github.com/repos/${REPOSITORY}/releases/latest")"
+  # The "releases/latest" endpoint ignores prereleases. The project publishes
+  # alpha builds first, so use the newest published release of either kind.
+  release_json="$(github_get "https://api.github.com/repos/${REPOSITORY}/releases?per_page=1")"
   tag="$(printf '%s' "$release_json" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
   [ -n "$tag" ] || fail "could not determine the latest release"
 else
