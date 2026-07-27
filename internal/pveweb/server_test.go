@@ -2,8 +2,8 @@ package pveweb
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -87,22 +87,73 @@ func TestServerRequiresAuthentication(t *testing.T) {
 	}
 }
 
-func TestStatusAndAgentTestAreAvailableThroughAuthenticatedAPI(t *testing.T) {
+func TestLoginSessionAndLogout(t *testing.T) {
+	server, _ := testServer(t, &fakeBackend{})
+	wrong := doRequest(t, server, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong-password"}`, nil, false)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status=%d body=%s", wrong.Code, wrong.Body.String())
+	}
+	cookie := login(t, server)
+	current := doRequest(t, server, http.MethodGet, "/api/v1/session", "", cookie, false)
+	if current.Code != http.StatusOK ||
+		!strings.Contains(current.Body.String(), `"username":"admin"`) {
+		t.Fatalf("session status=%d body=%s", current.Code, current.Body.String())
+	}
+	logout := doRequest(t, server, http.MethodDelete, "/api/v1/session", "", cookie, false)
+	if logout.Code != http.StatusOK {
+		t.Fatalf("logout status=%d body=%s", logout.Code, logout.Body.String())
+	}
+	after := doRequest(t, server, http.MethodGet, "/api/v1/status", "", cookie, false)
+	if after.Code != http.StatusUnauthorized {
+		t.Fatalf("expired session status=%d body=%s", after.Code, after.Body.String())
+	}
+}
+
+func TestLoginTemporarilyBlocksRepeatedFailures(t *testing.T) {
+	server, _ := testServer(t, &fakeBackend{})
+	for attempt := 0; attempt < loginFailureLimit; attempt++ {
+		response := doRequest(t, server, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong-password"}`, nil, false)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt=%d status=%d body=%s", attempt+1, response.Code, response.Body.String())
+		}
+	}
+	blocked := doRequest(t, server, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"a-secure-test-password"}`, nil, false)
+	if blocked.Code != http.StatusTooManyRequests {
+		t.Fatalf("blocked status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+}
+
+func TestStatusAndAgentTestAreAvailableThroughSession(t *testing.T) {
 	backend := &fakeBackend{guests: []pvereader.Guest{
-		{VMID: 100, Name: "windows", Type: pvereader.GuestQEMU, Status: "running"},
+		{VMID: 100, Name: "windows", Type: pvereader.GuestQEMU, Status: "running", Node: "pve"},
 	}}
 	server, _ := testServer(t, backend)
+	cookie := login(t, server)
 
-	response := doRequest(t, server, http.MethodGet, "/api/v1/status", "", true, false)
+	response := doRequest(t, server, http.MethodGet, "/api/v1/status", "", cookie, false)
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), `"vmid":100`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 
-	response = doRequest(t, server, http.MethodPost, "/api/v1/agent-test", `{"vmid":100}`, true, true)
+	response = doRequest(t, server, http.MethodPost, "/api/v1/agent-test", `{"vmid":100}`, cookie, true)
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), `"agent_result":"success"`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentTestRejectsLXCAndUnknownTargets(t *testing.T) {
+	backend := &fakeBackend{guests: []pvereader.Guest{
+		{VMID: 200, Name: "dns", Type: pvereader.GuestLXC, Status: "running", Node: "pve"},
+	}}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+	for _, vmid := range []int{200, 999} {
+		response := doRequest(t, server, http.MethodPost, "/api/v1/agent-test", fmt.Sprintf(`{"vmid":%d}`, vmid), cookie, true)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("vmid=%d status=%d body=%s", vmid, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -111,12 +162,13 @@ func TestWriteActionRequiresHeaderAndMatchingConfirmation(t *testing.T) {
 		{VMID: 100, Type: pvereader.GuestQEMU, Status: "running"},
 	}}
 	server, _ := testServer(t, backend)
+	cookie := login(t, server)
 
-	response := doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, true, false)
+	response := doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, cookie, false)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("missing header status=%d", response.Code)
 	}
-	response = doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":101}`, true, true)
+	response = doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":101}`, cookie, true)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("wrong confirmation status=%d", response.Code)
 	}
@@ -124,7 +176,7 @@ func TestWriteActionRequiresHeaderAndMatchingConfirmation(t *testing.T) {
 		t.Fatalf("action ran without valid confirmation: %#v", backend.actions)
 	}
 
-	response = doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, true, true)
+	response = doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, cookie, true)
 	if response.Code != http.StatusOK || len(backend.actions) != 1 {
 		t.Fatalf("status=%d actions=%#v body=%s", response.Code, backend.actions, response.Body.String())
 	}
@@ -135,13 +187,14 @@ func TestHostPoweroffRequiresTypedPhrase(t *testing.T) {
 		{VMID: 100, Type: pvereader.GuestQEMU, Status: "stopped"},
 	}}
 	server, _ := testServer(t, backend)
+	cookie := login(t, server)
 	wrong := `{"confirm_node":"pve","confirm_poweroff":"POWER OFF"}`
-	response := doRequest(t, server, http.MethodPost, "/api/v1/host-poweroff", wrong, true, true)
+	response := doRequest(t, server, http.MethodPost, "/api/v1/host-poweroff", wrong, cookie, true)
 	if response.Code != http.StatusBadRequest || backend.poweroff {
 		t.Fatalf("status=%d poweroff=%v", response.Code, backend.poweroff)
 	}
 	right := `{"confirm_node":"pve","confirm_poweroff":"POWER OFF pve"}`
-	response = doRequest(t, server, http.MethodPost, "/api/v1/host-poweroff", right, true, true)
+	response = doRequest(t, server, http.MethodPost, "/api/v1/host-poweroff", right, cookie, true)
 	if response.Code != http.StatusOK || !backend.poweroff {
 		t.Fatalf("status=%d poweroff=%v body=%s", response.Code, backend.poweroff, response.Body.String())
 	}
@@ -154,9 +207,10 @@ func TestOnlyOneWriteActionCanRunAtATime(t *testing.T) {
 		block:  block,
 	}
 	server, _ := testServer(t, backend)
+	cookie := login(t, server)
 	firstDone := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		firstDone <- doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, true, true)
+		firstDone <- doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, cookie, true)
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -171,7 +225,7 @@ func TestOnlyOneWriteActionCanRunAtATime(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	second := doRequest(t, server, http.MethodPost, "/api/v1/stopall", `{"confirm_node":"pve"}`, true, true)
+	second := doRequest(t, server, http.MethodPost, "/api/v1/stopall", `{"confirm_node":"pve"}`, cookie, true)
 	if second.Code != http.StatusConflict {
 		t.Fatalf("second action status=%d body=%s", second.Code, second.Body.String())
 	}
@@ -188,15 +242,19 @@ func testServer(t *testing.T, backend *fakeBackend) (http.Handler, *strings.Buil
 		t.Fatal(err)
 	}
 	var logs strings.Builder
+	passwordHash, err := HashPassword("a-secure-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := &Server{
-		Node:        "pve",
-		Executor:    backend,
-		Agents:      backend,
-		Username:    "admin",
-		Password:    "a-secure-test-password",
-		WebRoot:     root,
-		Logger:      log.New(&logs, "", 0),
-		ActionLimit: time.Second,
+		Node:         "pve",
+		Executor:     backend,
+		Agents:       backend,
+		Username:     "admin",
+		PasswordHash: passwordHash,
+		WebRoot:      root,
+		Logger:       log.New(&logs, "", 0),
+		ActionLimit:  time.Second,
 	}
 	handler, err := server.Handler()
 	if err != nil {
@@ -211,7 +269,7 @@ func doRequest(
 	method string,
 	path string,
 	body string,
-	auth bool,
+	cookie *http.Cookie,
 	confirmed bool,
 ) *httptest.ResponseRecorder {
 	t.Helper()
@@ -219,8 +277,8 @@ func doRequest(
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if auth {
-		request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:a-secure-test-password")))
+	if cookie != nil {
+		request.AddCookie(cookie)
 	}
 	if confirmed {
 		request.Header.Set(confirmationHeader, "confirmed")
@@ -228,4 +286,28 @@ func doRequest(
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func login(t *testing.T, handler http.Handler) *http.Cookie {
+	t.Helper()
+	response := doRequest(
+		t,
+		handler,
+		http.MethodPost,
+		"/api/v1/session",
+		`{"username":"admin","password":"a-secure-test-password"}`,
+		nil,
+		false,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	result := response.Result()
+	for _, cookie := range result.Cookies() {
+		if cookie.Name == sessionCookieName {
+			return cookie
+		}
+	}
+	t.Fatal("login did not return a session cookie")
+	return nil
 }

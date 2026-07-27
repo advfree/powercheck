@@ -2,6 +2,11 @@
 
 PowerCheck 是面向 PVE 和常开 Linux 唤醒机的断电保护项目。目前完成了状态机模拟器、假 PVE 执行器、真实只读 Dry-run 和分级解锁的真实 PVE 执行器。
 
+> **v0.2.0 安全边界：** 自动 NUT + 网络停电流程仍为 DRY-RUN；只有
+> “Guest 检测”页面中经过逐级确认的人工按钮会执行真实 PVE 命令。当前
+> PVE Web 服务仍以 root 运行，只能通过可信内网、VPN 或受保护的反向代理
+> 访问，禁止直接暴露到公网。
+
 ## 第一阶段能验证什么
 
 - NUT 连续报告 `OB/LB` 30 秒后确认停电。
@@ -194,11 +199,12 @@ sudo powercheck-update
 sudo powercheck-web-enable
 ```
 
-第二条命令会创建并启动 `powercheck-pve-web.service`，同时显示随机生成的
-登录密码。浏览器打开 `http://PVE-IP:8765`，用户名为 `admin`。密码保存在：
+第二条命令会创建并启动 `powercheck-pve-web.service`，同时只显示一次随机
+生成的初始密码。浏览器打开 `http://PVE-IP:8765`，在页面内使用用户名
+`admin` 登录。PVE 节点只保存带随机盐的密码哈希：
 
 ```text
-/etc/powercheck/web-password
+/etc/powercheck/web-account.json
 ```
 
 进入“Guest 检测”后，可以直接点击：
@@ -211,7 +217,15 @@ sudo powercheck-web-enable
 网页操作仍由 PVE 本机执行器检查 VMID、节点名和 Guest 状态；同一时间只允许
 一个关机操作。宿主机关机需要单独确认并等待 5 秒。默认监听
 `0.0.0.0:8765`，请只通过学校 VPN、可信内网或受保护的反向代理访问，不要
-直接暴露到公网。纯 HTTP 不适合公网传输登录密码。
+直接暴露到公网。登录状态使用仅服务端可读的会话 Cookie；纯 HTTP 仍不适合
+公网传输登录密码。页面提供跟随系统、亮色和深色三种主题，选择保存在当前
+浏览器中。
+
+如果遗失管理员密码，可在 PVE 本机重新生成；该操作不会修改停电配置：
+
+```bash
+sudo powercheck-web-enable --reset-password
+```
 
 第三步在确认单 Guest 测试正常后，真实安全关闭该节点的全部 Guest：
 

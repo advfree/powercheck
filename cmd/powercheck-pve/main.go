@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -33,14 +34,25 @@ func main() {
 		confirmPoweroff = flag.Bool("confirm-host-poweroff", false, "required for host poweroff")
 		listen          = flag.String("listen", "127.0.0.1:8765", "web console listen address")
 		webRoot         = flag.String("web-root", "/usr/local/share/powercheck/web", "directory containing the web console")
-		webUser         = flag.String("web-user", "admin", "web console Basic Auth username")
-		webPasswordFile = flag.String("web-password-file", "/etc/powercheck/web-password", "root-readable web password file")
+		webAccountFile  = flag.String("web-account-file", "/etc/powercheck/web-account.json", "root-readable web account file")
 		versionOnly     = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
 
 	if *versionOnly {
 		fmt.Println(buildinfo.String("powercheck-pve"))
+		return
+	}
+	if *action == "hash-web-password" {
+		password, err := readPasswordFromStdin()
+		if err != nil {
+			exitError(err)
+		}
+		hash, err := pveweb.HashPassword(password)
+		if err != nil {
+			exitError(err)
+		}
+		fmt.Println(hash)
 		return
 	}
 	if *node == "" {
@@ -66,19 +78,19 @@ func main() {
 	if *action == "web" {
 		requireLinuxExecution(*execute)
 		requireNodeConfirmation(*node, *confirmNode)
-		password, err := readWebPassword(*webPasswordFile)
+		account, err := readWebAccount(*webAccountFile)
 		if err != nil {
 			exitError(err)
 		}
 		server := pveweb.Server{
-			Node:        *node,
-			Executor:    executor,
-			Agents:      reader,
-			Username:    *webUser,
-			Password:    password,
-			WebRoot:     *webRoot,
-			Logger:      log.New(os.Stdout, "powercheck-web ", log.LstdFlags|log.LUTC),
-			ActionLimit: time.Duration(*timeoutSeconds+30) * time.Second,
+			Node:         *node,
+			Executor:     executor,
+			Agents:       reader,
+			Username:     account.Username,
+			PasswordHash: account.PasswordHash,
+			WebRoot:      *webRoot,
+			Logger:       log.New(os.Stdout, "powercheck-web ", log.LstdFlags|log.LUTC),
+			ActionLimit:  time.Duration(*timeoutSeconds+30) * time.Second,
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -191,21 +203,49 @@ func errorText(err error) string {
 	return err.Error()
 }
 
-func readWebPassword(path string) (string, error) {
+type webAccount struct {
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func readWebAccount(path string) (webAccount, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("read web password metadata: %w", err)
+		return webAccount{}, fmt.Errorf("read web account metadata: %w", err)
 	}
 	if runtime.GOOS == "linux" && info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("web password file %q must not be readable by group or others", path)
+		return webAccount{}, fmt.Errorf("web account file %q must not be readable by group or others", path)
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read web password: %w", err)
+		return webAccount{}, fmt.Errorf("read web account: %w", err)
 	}
-	password := strings.TrimSpace(string(content))
-	if len(password) < 12 {
-		return "", fmt.Errorf("web password must contain at least 12 characters")
+	var account webAccount
+	decoder := json.NewDecoder(strings.NewReader(string(content)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&account); err != nil {
+		return webAccount{}, fmt.Errorf("decode web account: %w", err)
+	}
+	if account.Username == "" || len(account.Username) > 64 {
+		return webAccount{}, fmt.Errorf("web account username is invalid")
+	}
+	if account.PasswordHash == "" {
+		return webAccount{}, fmt.Errorf("web account password_hash is required")
+	}
+	return account, nil
+}
+
+func readPasswordFromStdin() (string, error) {
+	content, err := io.ReadAll(io.LimitReader(os.Stdin, 1025))
+	if err != nil {
+		return "", fmt.Errorf("read password from stdin: %w", err)
+	}
+	if len(content) > 1024 {
+		return "", fmt.Errorf("web password must not exceed 1024 characters")
+	}
+	password := strings.TrimRight(string(content), "\r\n")
+	if password == "" {
+		return "", fmt.Errorf("web password is required on stdin")
 	}
 	return password, nil
 }
