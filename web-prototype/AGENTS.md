@@ -9,3 +9,5 @@ When implementing from a selected generated mock, treat that image as the source
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
 
 Operational PVE tests should be available as Web buttons so the user does not need to retype destructive CLI commands. Keep the CLI as the guarded backend and recovery interface. Single-Guest, node-wide, and host-poweroff actions must use progressively stronger confirmation dialogs, while the PVE backend still validates the node, VMID, and stopped-Guest state.
+
+The Web console must have an in-page account login and logout flow; do not rely on an unexplained browser Basic Auth prompt. Keep human Web sessions separate from PVE API or node credentials. Offer system, light, and dark appearance choices, remember the choice locally, and apply it to login, dashboard, drawers, dialogs, and mobile layouts.

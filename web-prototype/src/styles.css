@@ -1444,6 +1444,513 @@ button:focus-visible {
   }
 }
 
+/* Account, session, and theme controls */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.theme-control {
+  position: relative;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.theme-control select {
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.theme-control select option {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.theme-control--compact {
+  min-height: 34px;
+  margin-left: 14px;
+}
+
+.account-chip {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-left: 1px solid var(--line);
+  color: var(--text);
+}
+
+.account-chip > span,
+.account-chip strong,
+.account-chip small {
+  display: block;
+}
+
+.account-chip strong {
+  font-size: 12px;
+}
+
+.account-chip small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.logout-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.logout-button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 24px clamp(20px, 4vw, 56px);
+  color: var(--text);
+  background:
+    radial-gradient(circle at 18% 15%, rgb(67 138 247 / 13%), transparent 34%),
+    radial-gradient(circle at 82% 78%, rgb(82 200 106 / 8%), transparent 30%),
+    var(--bg);
+}
+
+.login-page__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand--login {
+  min-height: auto;
+  padding: 0;
+}
+
+.login-card {
+  width: min(430px, 100%);
+  align-self: center;
+  justify-self: center;
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 28px 80px rgb(0 0 0 / 24%);
+}
+
+.login-card__icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 18px;
+  border: 1px solid #315a85;
+  border-radius: 10px;
+  color: #76a9f6;
+  background: #10243a;
+}
+
+.login-card h1 {
+  margin: 6px 0 8px;
+  font-size: 28px;
+  letter-spacing: -0.03em;
+}
+
+.login-card__intro {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.login-card form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.login-field__input {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: var(--surface-raised);
+}
+
+.login-field__input:focus-within {
+  border-color: #639ef8;
+  box-shadow: 0 0 0 3px rgb(67 138 247 / 14%);
+}
+
+.login-field__input input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+}
+
+.login-error {
+  margin: -3px 0 0;
+  padding: 9px 11px;
+  border: 1px solid #73363b;
+  border-radius: 6px;
+  color: #ffb6ba;
+  background: #2a1519;
+  font-size: 11px;
+}
+
+.login-submit {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.demo-credential {
+  margin: 18px 0 0;
+  padding-top: 15px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+
+.demo-credential strong {
+  color: var(--text);
+  font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+.login-page__footer {
+  margin: 0;
+  color: var(--faint);
+  text-align: center;
+  font-size: 10px;
+}
+
+.auth-loading {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  color: var(--muted);
+  background: var(--bg);
+  text-align: center;
+}
+
+/* Bright daytime palette. Dark remains the original visual baseline. */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  color: #1c2937;
+  background: #eef3f8;
+  --bg: #eef3f8;
+  --sidebar: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #f6f8fb;
+  --surface-hover: #edf4fc;
+  --line: #cad5e1;
+  --line-soft: #e2e8f0;
+  --text: #1c2937;
+  --muted: #5f7184;
+  --faint: #8291a1;
+  --blue: #256fd8;
+  --blue-strong: #1f62bf;
+  --green: #218a3a;
+  --amber: #a96900;
+  --red: #c83c45;
+}
+
+:root[data-theme="light"] .sidebar {
+  border-right-color: var(--line);
+  box-shadow: 8px 0 30px rgb(32 53 75 / 4%);
+}
+
+:root[data-theme="light"] .brand strong,
+:root[data-theme="light"] .surface__header h1,
+:root[data-theme="light"] .surface__header h2,
+:root[data-theme="light"] .node-row--data,
+:root[data-theme="light"] .event-row strong,
+:root[data-theme="light"] .wol-summary dd,
+:root[data-theme="light"] .device-metrics strong,
+:root[data-theme="light"] .device-row strong,
+:root[data-theme="light"] .config-section legend,
+:root[data-theme="light"] .timeline-preview h3,
+:root[data-theme="light"] .config-grid > label > span:first-child,
+:root[data-theme="light"] .target-option strong,
+:root[data-theme="light"] .timeline-preview strong,
+:root[data-theme="light"] .drawer-empty h3,
+:root[data-theme="light"] .guest-console-row__identity strong,
+:root[data-theme="light"] .operation-dialog dd {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .event-row time,
+:root[data-theme="light"] .device-row {
+  color: var(--muted);
+}
+
+:root[data-theme="light"] .event-icon {
+  background: #edf3f8;
+}
+
+:root[data-theme="light"] .event-line,
+:root[data-theme="light"] .device-row {
+  border-color: var(--line-soft);
+}
+
+:root[data-theme="light"] .event-line {
+  background: var(--line);
+}
+
+:root[data-theme="light"] .brand small,
+:root[data-theme="light"] .nav-item,
+:root[data-theme="light"] .sidebar__footer,
+:root[data-theme="light"] .topbar__meta,
+:root[data-theme="light"] .node-row--head,
+:root[data-theme="light"] .node-name small,
+:root[data-theme="light"] .source-cell small,
+:root[data-theme="light"] .good-cell small {
+  color: var(--muted);
+}
+
+:root[data-theme="light"] .nav-item:hover {
+  color: #194d86;
+  background: #edf4fc;
+}
+
+:root[data-theme="light"] .nav-item--active {
+  color: #174f91;
+  background: #e5f0fd;
+}
+
+:root[data-theme="light"] .topbar {
+  background: rgb(255 255 255 / 92%);
+  border-bottom-color: var(--line);
+}
+
+:root[data-theme="light"] .topbar__meta time,
+:root[data-theme="light"] .system-ok {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .mode-pill {
+  color: #8f5a00;
+  background: #fff8e7;
+}
+
+:root[data-theme="light"] .node-row--head,
+:root[data-theme="light"] .config-file,
+:root[data-theme="light"] .config-grid > label,
+:root[data-theme="light"] .target-option,
+:root[data-theme="light"] .timeline-preview,
+:root[data-theme="light"] .pve-console__summary,
+:root[data-theme="light"] .guest-console-list {
+  background: #f7f9fc;
+}
+
+:root[data-theme="light"] .notice,
+:root[data-theme="light"] .local-config-callout,
+:root[data-theme="light"] .console-callout--success {
+  color: #236b35;
+  border-color: #9ecbaa;
+  background: #eff9f1;
+}
+
+:root[data-theme="light"] .local-config-callout strong {
+  color: #1f5f30;
+}
+
+:root[data-theme="light"] .local-config-callout p {
+  color: #4d7758;
+}
+
+:root[data-theme="light"] .number-input {
+  border-color: #b9c7d5;
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .number-input input {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .drawer,
+:root[data-theme="light"] .modal,
+:root[data-theme="light"] .operation-dialog {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .drawer-backdrop {
+  background: rgb(45 60 77 / 22%);
+}
+
+:root[data-theme="light"] .modal-backdrop,
+:root[data-theme="light"] .operation-backdrop {
+  background: rgb(45 60 77 / 48%);
+}
+
+:root[data-theme="light"] .icon-button:hover,
+:root[data-theme="light"] .secondary-button:hover {
+  color: var(--text);
+  background: #edf3f8;
+}
+
+:root[data-theme="light"] .console-callout--demo,
+:root[data-theme="light"] .safety-callout,
+:root[data-theme="light"] .shutdown-action {
+  color: #815500;
+  border-color: #d7b56d;
+  background: #fff8e8;
+}
+
+:root[data-theme="light"] .console-callout--error,
+:root[data-theme="light"] .login-error {
+  color: #a42e36;
+  border-color: #e0a3a7;
+  background: #fff2f3;
+}
+
+:root[data-theme="light"] .guest-console-row__icon,
+:root[data-theme="light"] .operation-dialog__icon,
+:root[data-theme="light"] .login-card__icon {
+  color: #2869b6;
+  border-color: #b5cee9;
+  background: #eaf3fc;
+}
+
+:root[data-theme="light"] .guest-state--running {
+  color: #236b35;
+  background: #e7f5eb;
+}
+
+:root[data-theme="light"] .guest-state--stopped {
+  color: #647487;
+  background: #e9eef3;
+}
+
+:root[data-theme="light"] .node-danger-zone {
+  border-color: #d9a5aa;
+  background: #fff7f7;
+}
+
+:root[data-theme="light"] .node-danger-zone > header {
+  border-bottom-color: #eed4d6;
+}
+
+:root[data-theme="light"] .node-danger-zone > header strong {
+  color: #593b3f;
+}
+
+:root[data-theme="light"] .node-danger-zone > header small,
+:root[data-theme="light"] .node-danger-zone > p {
+  color: #85676b;
+}
+
+:root[data-theme="light"] .operation-dialog > footer {
+  background: #f7f9fc;
+}
+
+@media (max-width: 1120px) {
+  .topbar__meta {
+    gap: 6px;
+  }
+
+  .account-chip small,
+  .logout-button span {
+    display: none;
+  }
+
+  .theme-control--compact select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    opacity: 0;
+  }
+
+  .theme-control--compact,
+  .account-chip,
+  .logout-button {
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .login-page {
+    padding: 18px;
+  }
+
+  .login-page__top {
+    align-items: flex-start;
+  }
+
+  .brand--login small {
+    display: none;
+  }
+
+  .login-card {
+    padding: 26px 22px;
+  }
+
+  .theme-control:not(.theme-control--compact) select {
+    width: 78px;
+  }
+
+  .topbar .account-chip {
+    display: none;
+  }
+}
+
+.mobile-context small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .pve-console {
   display: grid;
   gap: 14px;

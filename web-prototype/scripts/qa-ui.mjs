@@ -117,7 +117,36 @@ try {
   await send("Log.enable");
   await send("Page.enable");
   await waitFor(() => evaluate("document.readyState === 'complete'"));
-  await waitFor(() => evaluate("Boolean(document.querySelector('.mode-pill'))"));
+
+  const loginDemo = async () => {
+    await waitFor(() => evaluate("Boolean(document.querySelector('.login-card'))"));
+    await evaluate(`(() => {
+      const input = document.querySelector('input[name="password"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, 'powercheck-demo');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('.login-submit').click();
+    })()`);
+    await waitFor(() => evaluate("Boolean(document.querySelector('.mode-pill'))"));
+  };
+
+  await waitFor(() => evaluate("Boolean(document.querySelector('.login-card'))"));
+  const loginCapture = await send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  await writeFile(
+    join(process.cwd(), "qa-login.png"),
+    Buffer.from(loginCapture.data, "base64"),
+  );
+  await evaluate(`(() => {
+    const select = document.querySelector('.theme-control select');
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, 'light');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await waitFor(() => evaluate("document.documentElement.dataset.theme === 'light'"));
+  await loginDemo();
   await send("Emulation.setDeviceMetricsOverride", {
     width: 1440,
     height: 1024,
@@ -127,6 +156,7 @@ try {
   await delay(150);
 
   const checks = [];
+  checks.push("account login and remembered light theme");
   const desktopCapture = await send("Page.captureScreenshot", {
     format: "png",
     fromSurface: true,
@@ -289,7 +319,11 @@ try {
 
   await send("Page.reload", { ignoreCache: true });
   await delay(400);
-  await waitFor(() => evaluate("Boolean(document.querySelector('.mode-pill'))"));
+  assert(
+    await waitFor(() => evaluate("document.documentElement.dataset.theme === 'light'")),
+    "Theme preference did not survive reload",
+  );
+  await loginDemo();
   await send("Emulation.setDeviceMetricsOverride", {
     width: 390,
     height: 844,
@@ -301,6 +335,7 @@ try {
     overflow: document.documentElement.scrollWidth > window.innerWidth,
     sidebarBottom: getComputedStyle(document.querySelector('.sidebar')).bottom,
     firstNodeWidth: document.querySelector('.node-row--data').getBoundingClientRect().width,
+    themeDisplay: getComputedStyle(document.querySelector('.topbar .theme-control')).display,
     viewport: window.innerWidth
   })`);
   assert(!mobileLayout.overflow, "Mobile viewport has horizontal overflow");
@@ -309,6 +344,7 @@ try {
     mobileLayout.firstNodeWidth <= mobileLayout.viewport,
     "Mobile node cards exceed the viewport",
   );
+  assert(mobileLayout.themeDisplay !== "none", "Mobile theme control is unavailable");
   const mobileCapture = await send("Page.captureScreenshot", {
     format: "png",
     fromSurface: true,
@@ -318,6 +354,10 @@ try {
     Buffer.from(mobileCapture.data, "base64"),
   );
   checks.push("mobile responsive layout");
+
+  await evaluate("document.querySelector('.logout-button').click()");
+  await waitFor(() => evaluate("Boolean(document.querySelector('.login-card'))"));
+  checks.push("account logout");
 
   assert(consoleErrors.length === 0, `Browser console issues: ${consoleErrors.join("; ")}`);
   checks.push("browser console");

@@ -22,13 +22,16 @@ import {
   Play,
   Power,
   ShieldCheck,
+  SignOut,
   TestTube,
   Timer,
+  UserCircle,
   Warning,
   WifiHigh,
   X,
 } from "@phosphor-icons/react";
 import { PVEConsole } from "./PVEConsole.jsx";
+import { ThemeControl } from "./ThemeControl.jsx";
 
 const navItems = [
   { id: "overview", label: "总览", icon: House },
@@ -171,7 +174,7 @@ function AppModal({ title, onClose, children }) {
   );
 }
 
-export function App() {
+export function App({ session, onLogout, theme, onThemeChange }) {
   const [activeNav, setActiveNav] = useState("overview");
   const [isScanning, setIsScanning] = useState(false);
   const [lastUpdate, setLastUpdate] = useState("2026-07-26 22:35:18");
@@ -345,6 +348,18 @@ export function App() {
               <CheckCircle size={17} weight="fill" />
               系统正常
             </span>
+            <ThemeControl preference={theme} onChange={onThemeChange} compact />
+            <span className="account-chip" title={`当前节点：${session.node}`}>
+              <UserCircle size={19} weight="duotone" />
+              <span>
+                <strong>{session.username}</strong>
+                <small>{session.node}</small>
+              </span>
+            </span>
+            <button className="logout-button" onClick={onLogout} title="退出账户">
+              <SignOut size={18} />
+              <span>退出</span>
+            </button>
           </div>
         </header>
 
@@ -353,7 +368,10 @@ export function App() {
             <ShieldCheck size={26} weight="duotone" />
             <strong>PowerCheck</strong>
           </div>
-          <span>{activeLabel}</span>
+          <span className="mobile-context">
+            <small>{session.username}</small>
+            {activeLabel}
+          </span>
         </div>
 
         <section className="status-band" aria-label="电力安全状态">

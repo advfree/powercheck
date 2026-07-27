@@ -43,6 +43,9 @@ async function apiRequest(path, body) {
     throw new Error(`PVE API 返回了非 JSON 响应（HTTP ${response.status}）`);
   }
   const payload = await response.json();
+  if (response.status === 401) {
+    window.dispatchEvent(new CustomEvent("powercheck:unauthorized"));
+  }
   if (!response.ok) {
     throw new Error(payload.error || `PVE API 请求失败（HTTP ${response.status}）`);
   }

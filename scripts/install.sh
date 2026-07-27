@@ -137,6 +137,12 @@ if [ -d "${web_source}/assets" ]; then
 fi
 install -m 0644 "${web_source}/index.html" "${WEB_ROOT}/index.html"
 
+if [ -f /etc/systemd/system/powercheck-pve-web.service ] &&
+   command -v systemctl >/dev/null 2>&1; then
+  say "Migrating and restarting the existing authenticated Web console..."
+  "$WEB_ENABLE_COMMAND"
+fi
+
 printf '%s\n' "$tag" >"${STATE_DIR}/installed-version"
 say "PowerCheck ${tag} installed successfully."
 say "Update later with: sudo powercheck-update"

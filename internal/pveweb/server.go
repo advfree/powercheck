@@ -2,7 +2,6 @@ package pveweb
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"powercheck/internal/pveexec"
@@ -33,16 +33,20 @@ type AgentTester interface {
 }
 
 type Server struct {
-	Node        string
-	Executor    PVEExecutor
-	Agents      AgentTester
-	Username    string
-	Password    string
-	WebRoot     string
-	Logger      *log.Logger
-	ActionLimit time.Duration
+	Node         string
+	Executor     PVEExecutor
+	Agents       AgentTester
+	Username     string
+	PasswordHash string
+	WebRoot      string
+	Logger       *log.Logger
+	ActionLimit  time.Duration
+	SessionTTL   time.Duration
 
 	actionSlot chan struct{}
+	sessions   *sessionStore
+	loginMu    sync.Mutex
+	logins     map[string]loginAttempt
 }
 
 type statusResponse struct {
@@ -69,16 +73,21 @@ func (s *Server) Handler() (http.Handler, error) {
 		return nil, err
 	}
 	s.actionSlot = make(chan struct{}, 1)
+	s.sessions = &sessionStore{sessions: make(map[[32]byte]session)}
+	s.logins = make(map[string]loginAttempt)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
-	mux.HandleFunc("POST /api/v1/agent-test", s.handleAgentTest)
-	mux.HandleFunc("POST /api/v1/guest-shutdown", s.handleGuestShutdown)
-	mux.HandleFunc("POST /api/v1/stopall", s.handleStopAll)
-	mux.HandleFunc("POST /api/v1/host-poweroff", s.handleHostPoweroff)
+	mux.HandleFunc("POST /api/v1/session", s.handleLogin)
+	mux.HandleFunc("GET /api/v1/session", s.handleSession)
+	mux.HandleFunc("DELETE /api/v1/session", s.handleLogout)
+	mux.Handle("GET /api/v1/status", s.requireSession(http.HandlerFunc(s.handleStatus)))
+	mux.Handle("POST /api/v1/agent-test", s.requireSession(http.HandlerFunc(s.handleAgentTest)))
+	mux.Handle("POST /api/v1/guest-shutdown", s.requireSession(http.HandlerFunc(s.handleGuestShutdown)))
+	mux.Handle("POST /api/v1/stopall", s.requireSession(http.HandlerFunc(s.handleStopAll)))
+	mux.Handle("POST /api/v1/host-poweroff", s.requireSession(http.HandlerFunc(s.handleHostPoweroff)))
 	mux.Handle("/", s.staticHandler())
 
-	return s.securityHeaders(s.basicAuth(mux)), nil
+	return s.securityHeaders(mux), nil
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, address string) error {
@@ -138,6 +147,25 @@ func (s *Server) handleAgentTest(writer http.ResponseWriter, request *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
 	defer cancel()
+	status, err := s.Executor.Status(ctx)
+	if err != nil {
+		s.writeError(writer, http.StatusBadGateway, fmt.Errorf("verify QEMU guest target: %w", err))
+		return
+	}
+	var target *pvereader.Guest
+	for index := range status.Guests {
+		if status.Guests[index].VMID == input.VMID {
+			target = &status.Guests[index]
+			break
+		}
+	}
+	if target == nil ||
+		target.Type != pvereader.GuestQEMU ||
+		target.Template ||
+		(target.Node != "" && target.Node != s.Node) {
+		s.writeError(writer, http.StatusBadRequest, fmt.Errorf("VMID must identify a local non-template QEMU guest"))
+		return
+	}
 	result, err := s.Agents.TestAgent(ctx, input.VMID)
 	response := actionResponse{Node: s.Node, Agent: result}
 	if err != nil {
@@ -241,20 +269,6 @@ func (s *Server) decodeAction(writer http.ResponseWriter, request *http.Request)
 	return input, true
 }
 
-func (s *Server) basicAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		username, password, ok := request.BasicAuth()
-		userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(s.Username)) == 1
-		passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(s.Password)) == 1
-		if !ok || !userMatch || !passwordMatch {
-			writer.Header().Set("WWW-Authenticate", `Basic realm="PowerCheck PVE", charset="UTF-8"`)
-			http.Error(writer, "authentication required", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(writer, request)
-	})
-}
-
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -296,8 +310,8 @@ func (s *Server) validate() error {
 		return fmt.Errorf("PVE agent tester is required")
 	case s.Username == "":
 		return fmt.Errorf("web username is required")
-	case len(s.Password) < 12:
-		return fmt.Errorf("web password must contain at least 12 characters")
+	case !validPasswordHash(s.PasswordHash):
+		return fmt.Errorf("web password hash is invalid")
 	case s.WebRoot == "":
 		return fmt.Errorf("web root is required")
 	}
@@ -351,6 +365,34 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 		return fmt.Errorf("decode request: %w", err)
 	}
 	return nil
+}
+
+func decodeJSON[T any](
+	writer http.ResponseWriter,
+	request *http.Request,
+	maxBytes int64,
+) (T, bool) {
+	var input T
+	if mediaType := request.Header.Get("Content-Type"); !strings.HasPrefix(mediaType, "application/json") {
+		writeJSON(writer, http.StatusUnsupportedMediaType, actionResponse{
+			Error: "Content-Type must be application/json",
+		})
+		return input, false
+	}
+	reader := http.MaxBytesReader(writer, request.Body, maxBytes)
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeJSON(writer, http.StatusBadRequest, actionResponse{
+			Error: fmt.Sprintf("decode request: %v", err),
+		})
+		return input, false
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		writeJSON(writer, http.StatusBadRequest, actionResponse{Error: err.Error()})
+		return input, false
+	}
+	return input, true
 }
 
 func validVMID(vmid int) bool {
