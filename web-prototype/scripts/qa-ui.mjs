@@ -8,17 +8,24 @@ const chrome =
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const target = process.env.QA_URL ?? "http://127.0.0.1:4173/";
 const profile = await mkdtemp(join(tmpdir(), "powercheck-qa-"));
+const chromeArguments = [
+  "--headless=new",
+  "--disable-gpu",
+  "--hide-scrollbars",
+  "--remote-debugging-port=0",
+  `--user-data-dir=${profile}`,
+  "--window-size=1440,1024",
+  target,
+];
+
+if (process.platform === "linux") {
+  // GitHub-hosted runners do not provide Chrome's normal desktop sandbox setup.
+  chromeArguments.unshift("--disable-dev-shm-usage", "--no-sandbox");
+}
+
 const child = spawn(
   chrome,
-  [
-    "--headless=new",
-    "--disable-gpu",
-    "--hide-scrollbars",
-    "--remote-debugging-port=0",
-    `--user-data-dir=${profile}`,
-    "--window-size=1440,1024",
-    target,
-  ],
+  chromeArguments,
   { stdio: "ignore", windowsHide: true },
 );
 
