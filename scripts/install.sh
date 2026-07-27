@@ -5,6 +5,8 @@ REPOSITORY="${POWERCHECK_REPOSITORY:-advfree/powercheck}"
 REQUESTED_VERSION="${POWERCHECK_VERSION:-latest}"
 INSTALL_DIR="${POWERCHECK_INSTALL_DIR:-/usr/local/bin}"
 UPDATE_COMMAND="${POWERCHECK_UPDATE_COMMAND:-/usr/local/sbin/powercheck-update}"
+WEB_ENABLE_COMMAND="${POWERCHECK_WEB_ENABLE_COMMAND:-/usr/local/sbin/powercheck-web-enable}"
+WEB_ROOT="${POWERCHECK_WEB_ROOT:-/usr/local/share/powercheck/web}"
 STATE_DIR="${POWERCHECK_STATE_DIR:-/var/lib/powercheck}"
 ROLLBACK_DIR="${STATE_DIR}/rollback"
 
@@ -43,6 +45,7 @@ require_command sha256sum
 require_command install
 
 [ "$(uname -s)" = "Linux" ] || fail "this installer currently supports Linux only"
+[ "$WEB_ROOT" != "/" ] || fail "POWERCHECK_WEB_ROOT must not be /"
 
 case "$(uname -m)" in
   x86_64|amd64) architecture="amd64" ;;
@@ -86,6 +89,9 @@ printf '%s  %s\n' "$expected" "${work_dir}/${archive}" | sha256sum -c - >/dev/nu
 mkdir -p "${work_dir}/extract" "$INSTALL_DIR" "$ROLLBACK_DIR" "$STATE_DIR"
 tar -xzf "${work_dir}/${archive}" -C "${work_dir}/extract"
 
+web_source="${work_dir}/extract/web-prototype/dist/client"
+[ -f "${web_source}/index.html" ] || fail "release archive is missing the web console"
+
 for binary in powercheck-sim powercheck-dryrun powercheck-pve; do
   [ -x "${work_dir}/extract/${binary}" ] || fail "release archive is missing ${binary}"
 done
@@ -119,7 +125,20 @@ if [ -f "${work_dir}/extract/scripts/install.sh" ]; then
   install -m 0755 "${work_dir}/extract/scripts/install.sh" "$UPDATE_COMMAND"
 fi
 
+if [ -f "${work_dir}/extract/scripts/enable-web.sh" ]; then
+  mkdir -p "$(dirname "$WEB_ENABLE_COMMAND")"
+  install -m 0755 "${work_dir}/extract/scripts/enable-web.sh" "$WEB_ENABLE_COMMAND"
+fi
+
+mkdir -p "$WEB_ROOT"
+if [ -d "${web_source}/assets" ]; then
+  mkdir -p "${WEB_ROOT}/assets"
+  cp -R "${web_source}/assets/." "${WEB_ROOT}/assets/"
+fi
+install -m 0644 "${web_source}/index.html" "${WEB_ROOT}/index.html"
+
 printf '%s\n' "$tag" >"${STATE_DIR}/installed-version"
 say "PowerCheck ${tag} installed successfully."
 say "Update later with: sudo powercheck-update"
+say "Enable the authenticated PVE Web console with: sudo powercheck-web-enable"
 say "Configuration files and outage state were not modified."

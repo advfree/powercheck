@@ -158,7 +158,7 @@ sudo powercheck-update
 固定安装某个版本：
 
 ```bash
-sudo POWERCHECK_VERSION=v0.1.0-alpha.3 powercheck-update
+sudo POWERCHECK_VERSION=v0.1.0-alpha.4 powercheck-update
 ```
 
 ### 在真实 PVE 上分级测试
@@ -184,6 +184,34 @@ sudo powercheck-pve \
   -timeout 180 \
   -execute
 ```
+
+### 使用 Web 按钮测试
+
+更新到包含 Web 控制台的版本后，在每台 PVE 上只需执行一次：
+
+```bash
+sudo powercheck-update
+sudo powercheck-web-enable
+```
+
+第二条命令会创建并启动 `powercheck-pve-web.service`，同时显示随机生成的
+登录密码。浏览器打开 `http://PVE-IP:8765`，用户名为 `admin`。密码保存在：
+
+```text
+/etc/powercheck/web-password
+```
+
+进入“Guest 检测”后，可以直接点击：
+
+- 测试指定 QEMU Guest Agent；
+- 安全关闭单个 VM/LXC；
+- 使用 `pvenode stopall --force-stop 0` 安全关闭全部 Guest；
+- 在全部 Guest 已停止后关闭 PVE 宿主机。
+
+网页操作仍由 PVE 本机执行器检查 VMID、节点名和 Guest 状态；同一时间只允许
+一个关机操作。宿主机关机需要单独确认并等待 5 秒。默认监听
+`0.0.0.0:8765`，请只通过学校 VPN、可信内网或受保护的反向代理访问，不要
+直接暴露到公网。纯 HTTP 不适合公网传输登录密码。
 
 第三步在确认单 Guest 测试正常后，真实安全关闭该节点的全部 Guest：
 
@@ -244,6 +272,7 @@ sudo powercheck-pve \
 - `internal/reachability`：Linux/Windows 单次 Ping。
 - `internal/dryrun`：并发真实快照和只记录动作的会话。
 - `internal/pveexec`：带写命令白名单、节点核对和关机前复查的真实 PVE 执行器。
+- `internal/pveweb`：带登录认证、请求确认和单操作锁的本机 PVE Web API。
 - `internal/probe`：带超时、并发上限和防重叠的探测调度器。
 - `internal/sim`：JSON 场景加载、虚拟时间运行和结果比对。
 - `internal/wol`：有限 WOL 重试窗口计算。

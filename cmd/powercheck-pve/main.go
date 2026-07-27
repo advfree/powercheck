@@ -5,19 +5,24 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
 	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
 	"powercheck/internal/buildinfo"
 	"powercheck/internal/pveexec"
 	"powercheck/internal/pvereader"
+	"powercheck/internal/pveweb"
 	"powercheck/internal/readonlyexec"
 )
 
 func main() {
 	var (
-		action          = flag.String("action", "status", "status, agent-test, guest-shutdown, stopall, force-stop, or host-poweroff")
+		action          = flag.String("action", "status", "status, agent-test, guest-shutdown, stopall, force-stop, host-poweroff, or web")
 		node            = flag.String("node", "", "local PVE node name")
 		vmid            = flag.Int("vmid", 0, "target VM or container ID")
 		timeoutSeconds  = flag.Int("timeout", 180, "graceful guest shutdown timeout in seconds")
@@ -26,6 +31,10 @@ func main() {
 		confirmVMID     = flag.Int("confirm-vmid", 0, "must exactly match -vmid for guest actions")
 		emergency       = flag.Bool("emergency", false, "required for abrupt guest force-stop")
 		confirmPoweroff = flag.Bool("confirm-host-poweroff", false, "required for host poweroff")
+		listen          = flag.String("listen", "127.0.0.1:8765", "web console listen address")
+		webRoot         = flag.String("web-root", "/usr/local/share/powercheck/web", "directory containing the web console")
+		webUser         = flag.String("web-user", "admin", "web console Basic Auth username")
+		webPasswordFile = flag.String("web-password-file", "/etc/powercheck/web-password", "root-readable web password file")
 		versionOnly     = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -53,6 +62,31 @@ func main() {
 		Node:            *node,
 		LocalNode:       localNode,
 		ShutdownTimeout: time.Duration(*timeoutSeconds) * time.Second,
+	}
+	if *action == "web" {
+		requireLinuxExecution(*execute)
+		requireNodeConfirmation(*node, *confirmNode)
+		password, err := readWebPassword(*webPasswordFile)
+		if err != nil {
+			exitError(err)
+		}
+		server := pveweb.Server{
+			Node:        *node,
+			Executor:    executor,
+			Agents:      reader,
+			Username:    *webUser,
+			Password:    password,
+			WebRoot:     *webRoot,
+			Logger:      log.New(os.Stdout, "powercheck-web ", log.LstdFlags|log.LUTC),
+			ActionLimit: time.Duration(*timeoutSeconds+30) * time.Second,
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		fmt.Printf("PowerCheck PVE web console listening on http://%s for node %s\n", *listen, *node)
+		if err := server.ListenAndServe(ctx, *listen); err != nil {
+			exitError(err)
+		}
+		return
 	}
 
 	timeout := 10 * time.Second
@@ -155,6 +189,25 @@ func errorText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func readWebPassword(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("read web password metadata: %w", err)
+	}
+	if runtime.GOOS == "linux" && info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("web password file %q must not be readable by group or others", path)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read web password: %w", err)
+	}
+	password := strings.TrimSpace(string(content))
+	if len(password) < 12 {
+		return "", fmt.Errorf("web password must contain at least 12 characters")
+	}
+	return password, nil
 }
 
 func writeJSON(value any) {

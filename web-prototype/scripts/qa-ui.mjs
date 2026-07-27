@@ -177,6 +177,53 @@ try {
   checks.push("drawer Escape close");
 
   await evaluate(
+    "Array.from(document.querySelectorAll('.nav-item')).find((item) => item.textContent.includes('Guest 检测')).click()",
+  );
+  await waitFor(() => evaluate("Boolean(document.querySelector('.pve-console'))"));
+  await waitFor(() =>
+    evaluate("document.querySelector('.connection-badge')?.textContent.includes('界面演示')"),
+  );
+  assert(
+    await evaluate("document.querySelectorAll('.guest-console-row').length === 3"),
+    "Guest console did not show the demo PVE inventory",
+  );
+  await evaluate("document.querySelector('.text-action').click()");
+  await waitFor(() =>
+    evaluate("document.querySelector('.console-callout--success')?.textContent.includes('Agent 测试成功')"),
+  );
+  await evaluate("document.querySelector('.shutdown-action').click()");
+  await waitFor(() => evaluate("Boolean(document.querySelector('.operation-dialog'))"));
+  assert(
+    await evaluate("document.querySelector('.operation-dialog h3').textContent.includes('Guest 100')"),
+    "Guest shutdown confirmation targets the wrong VMID",
+  );
+  await evaluate("document.querySelector('.operation-check input').click()");
+  await evaluate("document.querySelector('.operation-dialog .primary-button').click()");
+  await waitFor(() =>
+    evaluate("document.querySelector('.guest-console-row .guest-state').textContent.includes('已停止')"),
+  );
+  await evaluate("document.querySelector('.node-danger-zone .secondary-button').click()");
+  await waitFor(() => evaluate("Boolean(document.querySelector('.operation-dialog'))"));
+  await evaluate("document.querySelector('.operation-check input').click()");
+  await evaluate("document.querySelector('.operation-dialog .primary-button').click()");
+  await waitFor(() =>
+    evaluate("Array.from(document.querySelectorAll('.guest-state')).every((item) => item.textContent.includes('已停止'))"),
+  );
+  await evaluate("document.querySelector('.node-danger-zone .danger-button').click()");
+  await waitFor(() => evaluate("Boolean(document.querySelector('.operation-dialog--danger'))"));
+  assert(
+    await evaluate("document.querySelector('.operation-dialog--danger .danger-button').disabled"),
+    "Host poweroff confirmation was immediately enabled",
+  );
+  await evaluate("document.querySelector('.operation-dialog .icon-button').click()");
+  await waitFor(() => evaluate("!document.querySelector('.operation-dialog')"));
+  checks.push("PVE Guest web tests and guarded host poweroff");
+  await evaluate(
+    "document.querySelector('.drawer-backdrop').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))",
+  );
+  await waitFor(() => evaluate("!document.querySelector('.drawer')"));
+
+  await evaluate(
     "Array.from(document.querySelectorAll('.nav-item')).find((item) => item.textContent.includes('设置')).click()",
   );
   await waitFor(() => evaluate("Boolean(document.querySelector('.config-panel'))"));

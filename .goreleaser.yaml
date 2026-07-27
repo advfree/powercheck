@@ -77,7 +77,10 @@ archives:
       - powercheck.example.json
       - powercheck-dryrun.example.json
       - scripts/install.sh
+      - scripts/enable-web.sh
       - scenarios/*.json
+      - web-prototype/dist/client/index.html
+      - web-prototype/dist/client/**/*
 
 checksum:
   name_template: checksums.txt

@@ -57,6 +57,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web-prototype/package-lock.json
+
+      - name: Build Web console
+        working-directory: web-prototype
+        run: |
+          npm ci
+          npm run build
+
       - name: Build and publish release
         uses: goreleaser/goreleaser-action@v7.2.3
         with:
@@ -65,4 +78,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

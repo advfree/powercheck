@@ -28,6 +28,7 @@ import {
   WifiHigh,
   X,
 } from "@phosphor-icons/react";
+import { PVEConsole } from "./PVEConsole.jsx";
 
 const navItems = [
   { id: "overview", label: "总览", icon: House },
@@ -129,8 +130,8 @@ const statusItems = [
   },
   {
     label: "当前模式说明",
-    value: "DRY-RUN",
-    hint: "当前不会执行真实关机",
+    value: "AUTO DRY-RUN",
+    hint: "手动测试可分级真实执行",
     icon: Flask,
     tone: "warning",
   },
@@ -538,7 +539,10 @@ export function App() {
             role="presentation"
             onMouseDown={closeDrawer}
           />
-          <aside className={`drawer ${drawer === "settings" ? "drawer--settings" : ""}`} aria-label={`${activeLabel}详情`}>
+          <aside
+            className={`drawer ${drawer === "settings" ? "drawer--settings" : ""} ${drawer === "guests" ? "drawer--console" : ""}`}
+            aria-label={`${activeLabel}详情`}
+          >
             <header>
               <div>
                 <p className="eyebrow">{drawer === "settings" ? "下发到 PVE 本地" : "演示面板"}</p>
@@ -562,6 +566,8 @@ export function App() {
                   </div>
                   <button className="primary-button primary-button--full" onClick={testAgents}>测试所有 Agent</button>
                 </>
+              ) : drawer === "guests" ? (
+                <PVEConsole />
               ) : drawer === "settings" ? (
                 <div className="config-panel">
                   <div className="local-config-callout">
@@ -660,13 +666,13 @@ export function App() {
       )}
 
       {modal === "dryrun" && (
-        <AppModal title="DRY-RUN 安全说明" onClose={() => setModal(null)}>
+        <AppModal title="自动流程 DRY-RUN 安全说明" onClose={() => setModal(null)}>
           <div className="modal__body">
             <div className="safety-callout">
               <Flask size={25} weight="fill" />
               <div>
-                <strong>真实关机能力未启用</strong>
-                <p>所有关机动作只会显示为 WOULD RUN，不会执行 pvenode、qm、pct 或 systemctl。</p>
+                <strong>自动停电触发尚未启用真实执行</strong>
+                <p>自动流程仍只显示 WOULD RUN；“Guest 检测”中的手动测试按钮经过确认后会执行真实 PVE 命令。</p>
               </div>
             </div>
             <ul className="check-list">
