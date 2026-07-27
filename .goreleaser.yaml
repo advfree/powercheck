@@ -39,11 +39,30 @@ builds:
         -X powercheck/internal/buildinfo.Commit={{ .Commit }}
         -X powercheck/internal/buildinfo.Date={{ .Date }}
 
+  - id: powercheck-pve
+    main: ./cmd/powercheck-pve
+    binary: powercheck-pve
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X powercheck/internal/buildinfo.Version={{ .Version }}
+        -X powercheck/internal/buildinfo.Commit={{ .Commit }}
+        -X powercheck/internal/buildinfo.Date={{ .Date }}
+
 archives:
   - id: powercheck
     ids:
       - powercheck-sim
       - powercheck-dryrun
+      - powercheck-pve
     formats:
       - tar.gz
     format_overrides:
@@ -77,4 +96,3 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
-

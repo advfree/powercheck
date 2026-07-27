@@ -86,11 +86,11 @@ printf '%s  %s\n' "$expected" "${work_dir}/${archive}" | sha256sum -c - >/dev/nu
 mkdir -p "${work_dir}/extract" "$INSTALL_DIR" "$ROLLBACK_DIR" "$STATE_DIR"
 tar -xzf "${work_dir}/${archive}" -C "${work_dir}/extract"
 
-for binary in powercheck-sim powercheck-dryrun; do
+for binary in powercheck-sim powercheck-dryrun powercheck-pve; do
   [ -x "${work_dir}/extract/${binary}" ] || fail "release archive is missing ${binary}"
 done
 
-for binary in powercheck-sim powercheck-dryrun; do
+for binary in powercheck-sim powercheck-dryrun powercheck-pve; do
   source_path="${work_dir}/extract/${binary}"
   if [ -f "${INSTALL_DIR}/${binary}" ]; then
     mkdir -p "${ROLLBACK_DIR}/${backup_stamp}"
@@ -101,9 +101,10 @@ for binary in powercheck-sim powercheck-dryrun; do
 done
 
 if ! "${INSTALL_DIR}/powercheck-sim" -version >/dev/null 2>&1 ||
-   ! "${INSTALL_DIR}/powercheck-dryrun" -version >/dev/null 2>&1; then
+   ! "${INSTALL_DIR}/powercheck-dryrun" -version >/dev/null 2>&1 ||
+   ! "${INSTALL_DIR}/powercheck-pve" -version >/dev/null 2>&1; then
   say "Health check failed; restoring previous binaries..."
-  for binary in powercheck-sim powercheck-dryrun; do
+  for binary in powercheck-sim powercheck-dryrun powercheck-pve; do
     if [ -f "${ROLLBACK_DIR}/${backup_stamp}/${binary}" ]; then
       cp -p "${ROLLBACK_DIR}/${backup_stamp}/${binary}" "${INSTALL_DIR}/${binary}"
     else

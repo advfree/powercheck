@@ -1,6 +1,6 @@
 # PowerCheck
 
-PowerCheck 是面向 PVE 和常开 Linux 唤醒机的断电保护项目。目前完成了状态机模拟器、假 PVE 执行器和真实只读 Dry-run。项目尚未包含真实关机执行器。
+PowerCheck 是面向 PVE 和常开 Linux 唤醒机的断电保护项目。目前完成了状态机模拟器、假 PVE 执行器、真实只读 Dry-run 和分级解锁的真实 PVE 执行器。
 
 ## 第一阶段能验证什么
 
@@ -43,7 +43,7 @@ PVE 节点首次安装后立即使用内置安全默认值：检测间隔 5 秒�
 - 读取失败会记录在 `issues`，PVE 读取失败时不会误报“所有 Guest 已停止”。
 - `pve_node` 限制只处理当前独立 PVE 节点，不会混入其他节点 Guest。
 
-真实命令执行层只有以下白名单：
+Dry-run 的真实命令执行层只有以下只读白名单：
 
 ```text
 pvesh get /cluster/resources --type vm --output-format json
@@ -53,6 +53,15 @@ ping <目标>
 ```
 
 `qm stop`、`pct stop`、`pvenode stopall`、`systemctl poweroff`、`upscmd` 和参数注入都会在启动进程前被拒绝。
+
+## 第四阶段能验证什么
+
+- 使用 `qm shutdown` 或 `pct shutdown` 真实安全关闭一个指定 Guest。
+- 使用 `pvenode stopall --force-stop 0` 按 PVE 顺序关闭全部 Guest，超时不硬停。
+- 单独测试指定 Guest 的紧急 `qm stop` 或 `pct stop`。
+- 宿主机关机前重新读取 Guest 状态；仍有 Guest 运行时拒绝执行。
+- 写操作要求 `-execute`、匹配的节点或 VMID 确认参数，并核对本机 hostname。
+- 所有写命令使用独立的固定参数白名单，不经过 shell。
 
 ## 运行
 
@@ -127,7 +136,8 @@ Go 测试、Web 构建、浏览器交互测试和发布配置校验。推送形�
 的标签后，Release 流水线会为 Linux/Windows 的 amd64、arm64 生成
 归档和 `checksums.txt`。
 
-当前 Release 只包含模拟器和只读 Dry-run；真实关机节点程序尚未完成。
+Release 包含模拟器、只读 Dry-run 和分级解锁的真实 PVE 执行器。自动停电
+守护进程尚未启用真实执行；应先按下面的顺序验证每个 PVE 节点。
 
 Linux 首次安装最新 Release：
 
@@ -148,7 +158,68 @@ sudo powercheck-update
 固定安装某个版本：
 
 ```bash
-sudo POWERCHECK_VERSION=v0.1.0-alpha.2 powercheck-update
+sudo POWERCHECK_VERSION=v0.1.0-alpha.3 powercheck-update
+```
+
+### 在真实 PVE 上分级测试
+
+以下命令必须直接在 PVE 宿主机执行。把 `pve` 换成该宿主机的节点名。
+
+第一步只读检查，不会关机：
+
+```bash
+sudo powercheck-pve -node pve -action status
+sudo powercheck-pve -node pve -action agent-test -vmid 100
+```
+
+第二步选择一个允许关闭的测试 Guest。这个命令会真实关闭 VM 或 LXC，但
+不会关闭其他 Guest 和宿主机：
+
+```bash
+sudo powercheck-pve \
+  -node pve \
+  -action guest-shutdown \
+  -vmid 100 \
+  -confirm-vmid 100 \
+  -timeout 180 \
+  -execute
+```
+
+第三步在确认单 Guest 测试正常后，真实安全关闭该节点的全部 Guest：
+
+```bash
+sudo powercheck-pve \
+  -node pve \
+  -action stopall \
+  -confirm-node pve \
+  -timeout 180 \
+  -execute
+```
+
+此处固定执行 `pvenode stopall --force-stop 0`，超时也不会自动硬停 Guest。
+
+宿主机关机是独立的最后一步。程序会再次读取 Guest 状态，只要还有一个
+Guest 运行就拒绝执行：
+
+```bash
+sudo powercheck-pve \
+  -node pve \
+  -action host-poweroff \
+  -confirm-node pve \
+  -confirm-host-poweroff \
+  -execute
+```
+
+紧急硬停必须指定单个 VMID，并增加额外的 `-emergency` 解锁参数：
+
+```bash
+sudo powercheck-pve \
+  -node pve \
+  -action force-stop \
+  -vmid 100 \
+  -confirm-vmid 100 \
+  -emergency \
+  -execute
 ```
 
 ## 场景文件
@@ -172,9 +243,11 @@ sudo POWERCHECK_VERSION=v0.1.0-alpha.2 powercheck-update
 - `internal/nutreader`：NUT `upsc` 输出解析。
 - `internal/reachability`：Linux/Windows 单次 Ping。
 - `internal/dryrun`：并发真实快照和只记录动作的会话。
+- `internal/pveexec`：带写命令白名单、节点核对和关机前复查的真实 PVE 执行器。
 - `internal/probe`：带超时、并发上限和防重叠的探测调度器。
 - `internal/sim`：JSON 场景加载、虚拟时间运行和结果比对。
 - `internal/wol`：有限 WOL 重试窗口计算。
 - `cmd/powercheck-sim`：命令行模拟器。
 - `cmd/powercheck-dryrun`：真实读取、永不关机的命令行程序。
+- `cmd/powercheck-pve`：需要分级确认参数的真实 PVE 关机测试程序。
 - `PVE_POWER_V0.1_REQUIREMENTS.md`：v0.1 需求文档。
