@@ -46,3 +46,32 @@ func TestSimulateUsesSampleBoundary(t *testing.T) {
 		t.Fatalf("graceful step at %d, want 35", result.Steps[1].AtSeconds)
 	}
 }
+
+func TestSimulateSkipsEmergencyWhenAllGuestsAlreadyStopped(t *testing.T) {
+	config := Default()
+	result, err := Simulate(config, ScenarioNUT, []pvereader.Guest{
+		{VMID: 100, Type: pvereader.GuestQEMU, Status: "stopped"},
+		{VMID: 102, Type: pvereader.GuestQEMU, Status: "stopped"},
+		{VMID: 103, Type: pvereader.GuestQEMU, Status: "stopped"},
+		{VMID: 106, Type: pvereader.GuestQEMU, Status: "stopped"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Steps) != 3 {
+		t.Fatalf("unexpected steps: %#v", result.Steps)
+	}
+	if result.Steps[1].Kind != core.ActionGracefulShutdown ||
+		result.Steps[1].AtSeconds != 30 {
+		t.Fatalf("unexpected graceful step: %#v", result.Steps[1])
+	}
+	if result.Steps[2].Kind != core.ActionHostPoweroffRequested ||
+		result.Steps[2].AtSeconds != 30 {
+		t.Fatalf("unexpected poweroff step: %#v", result.Steps[2])
+	}
+	for _, step := range result.Steps {
+		if step.Kind == core.ActionEmergencyStopRemaining {
+			t.Fatalf("unexpected emergency step: %#v", step)
+		}
+	}
+}

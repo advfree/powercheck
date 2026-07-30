@@ -44,7 +44,7 @@ func Simulate(config Config, scenario string, guests []pvereader.Guest) (Simulat
 		NUT:              core.NUTOnBattery,
 		LANReachable:     true,
 		WANReachable:     true,
-		AllGuestsStopped: false,
+		AllGuestsStopped: pvereader.AllGuestsStopped(guests),
 	}
 	if scenario == ScenarioNetwork {
 		snapshot.NUT = core.NUTUnreachable
