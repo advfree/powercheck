@@ -2,7 +2,9 @@ package dryrun
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,8 +104,48 @@ type pingStub struct {
 	reachable map[string]bool
 }
 
+type failingNUTStub struct{}
+
+func (failingNUTStub) Read(context.Context) (nutreader.Reading, error) {
+	return nutreader.Reading{}, errors.New("NUT unavailable")
+}
+
+type countingPingStub struct {
+	calls atomic.Int32
+}
+
+func (s *countingPingStub) Probe(_ context.Context, target string) reachability.Result {
+	s.calls.Add(1)
+	return reachability.Result{Target: target, Reachable: true}
+}
+
 func (s pingStub) Probe(_ context.Context, target string) reachability.Result {
 	return reachability.Result{Target: target, Reachable: s.reachable[target]}
+}
+
+func TestCollectorOnlyProbesNetworksWhenNUTIsUnavailable(t *testing.T) {
+	config := validTestConfig()
+	ping := &countingPingStub{}
+	collector, err := NewCollector(
+		config,
+		pveStub{},
+		nutStub{reading: nutreader.Reading{Status: core.NUTOnline}},
+		ping,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector.Collect(context.Background())
+	if got := ping.calls.Load(); got != 0 {
+		t.Fatalf("network probes with readable NUT=%d, want 0", got)
+	}
+
+	collector.NUT = failingNUTStub{}
+	collector.Collect(context.Background())
+	want := int32(len(config.LANTargets) + len(config.WANTargets))
+	if got := ping.calls.Load(); got != want {
+		t.Fatalf("fallback network probes=%d, want %d", got, want)
+	}
 }
 
 func TestCollectorBuildsOneAtomicSnapshot(t *testing.T) {
@@ -126,7 +168,7 @@ func TestCollectorBuildsOneAtomicSnapshot(t *testing.T) {
 	report := collector.Collect(context.Background())
 	if report.Snapshot.NUT != core.NUTOnline ||
 		!report.Snapshot.LANReachable ||
-		report.Snapshot.WANReachable ||
+		!report.Snapshot.WANReachable ||
 		report.Snapshot.AllGuestsStopped {
 		t.Fatalf("unexpected snapshot: %#v", report.Snapshot)
 	}

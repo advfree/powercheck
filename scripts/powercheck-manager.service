@@ -1,0 +1,15 @@
+[Unit]
+Description=PowerCheck Manager Web Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/systemd-cat --namespace=powercheck --identifier=powercheck-manager /home/diaoyu66/.local/bin/powercheck-manager -listen 0.0.0.0:8765 -pve-url http://192.168.1.66:8765 -web-root /home/diaoyu66/.local/share/powercheck-manager/web-production-20260730-final -event-file /home/diaoyu66/.local/state/powercheck/events.jsonl -nut-address 192.168.1.200:3493 -nut-history-file /home/diaoyu66/.local/state/powercheck/ups-history.jsonl -ups-spec /home/diaoyu66/.config/powercheck/ups-spec.json -wol-config /home/diaoyu66/.config/powercheck/wol.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

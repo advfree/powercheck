@@ -57,12 +57,49 @@ builds:
         -X powercheck/internal/buildinfo.Commit={{ .Commit }}
         -X powercheck/internal/buildinfo.Date={{ .Date }}
 
+  - id: powercheck-manager
+    main: ./cmd/powercheck-manager
+    binary: powercheck-manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X powercheck/internal/buildinfo.Version={{ .Version }}
+        -X powercheck/internal/buildinfo.Commit={{ .Commit }}
+        -X powercheck/internal/buildinfo.Date={{ .Date }}
+
+  - id: powercheck-hostguard
+    main: ./cmd/powercheck-hostguard
+    binary: powercheck-hostguard
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X powercheck/internal/buildinfo.Version={{ .Version }}
+        -X powercheck/internal/buildinfo.Commit={{ .Commit }}
+        -X powercheck/internal/buildinfo.Date={{ .Date }}
+
 archives:
   - id: powercheck
     ids:
       - powercheck-sim
       - powercheck-dryrun
       - powercheck-pve
+      - powercheck-manager
+      - powercheck-hostguard
     formats:
       - tar.gz
     format_overrides:
@@ -77,8 +114,15 @@ archives:
       - PVE_POWER_V0.1_REQUIREMENTS.md
       - powercheck.example.json
       - powercheck-dryrun.example.json
+      - powercheck-wol.example.json
+      - powercheck-ups-spec.example.json
       - scripts/install.sh
       - scripts/enable-web.sh
+      - scripts/enable-manager-user.sh
+      - scripts/powercheck-auto-guard.service
+      - scripts/powercheck-host-guard.service
+      - scripts/powercheck-pve-api.service
+      - scripts/powercheck-manager.service
       - scenarios/*.json
       - web-prototype/dist/client/index.html
       - web-prototype/dist/client/**/*

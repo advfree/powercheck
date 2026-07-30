@@ -1,0 +1,26 @@
+{
+  "duration_seconds": 120,
+  "interval_seconds": 30,
+  "devices": [
+    {
+      "id": "pve-dell-p7920",
+      "name": "Dell P7920",
+      "ip": "192.168.1.66",
+      "mac": "7C:C3:85:BE:65:CC",
+      "broadcast": "192.168.1.255",
+      "port": 9,
+      "enabled": false,
+      "note": "当前联网的 Mellanox 网卡不支持 WOL；使用 23:00 RTC 一次性唤醒后备"
+    },
+    {
+      "id": "desktop-zhao",
+      "name": "台式机 ZHAO",
+      "ip": "192.168.1.170",
+      "mac": "04:7C:16:0C:FC:A4",
+      "broadcast": "192.168.1.255",
+      "port": 9,
+      "enabled": true,
+      "note": "普通 Windows 台式机；仅登记 WOL"
+    }
+  ]
+}

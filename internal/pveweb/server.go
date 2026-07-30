@@ -7,14 +7,18 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"powercheck/internal/guardevents"
+	"powercheck/internal/outageconfig"
 	"powercheck/internal/pveexec"
 	"powercheck/internal/pvereader"
 )
@@ -32,16 +36,25 @@ type AgentTester interface {
 	TestAgent(context.Context, int) (pvereader.AgentTestResult, error)
 }
 
+type OutageConfigStore interface {
+	Load() (outageconfig.Config, error)
+	Save(outageconfig.Config) error
+}
+
 type Server struct {
-	Node         string
-	Executor     PVEExecutor
-	Agents       AgentTester
-	Username     string
-	PasswordHash string
-	WebRoot      string
-	Logger       *log.Logger
-	ActionLimit  time.Duration
-	SessionTTL   time.Duration
+	Node           string
+	Executor       PVEExecutor
+	Agents         AgentTester
+	OutageConfig   OutageConfigStore
+	Username       string
+	PasswordHash   string
+	WebRoot        string
+	APIOnly        bool
+	AllowedSources []string
+	GuardEventFile string
+	Logger         *log.Logger
+	ActionLimit    time.Duration
+	SessionTTL     time.Duration
 
 	actionSlot chan struct{}
 	sessions   *sessionStore
@@ -68,6 +81,38 @@ type actionResponse struct {
 	Error  string                    `json:"error,omitempty"`
 }
 
+type agentStatus struct {
+	VMID   int    `json:"vmid"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+type agentStatusResponse struct {
+	Node      string        `json:"node"`
+	CheckedAt time.Time     `json:"checked_at"`
+	Results   []agentStatus `json:"results"`
+}
+
+type outageConfigResponse struct {
+	Node   string              `json:"node"`
+	Config outageconfig.Config `json:"config"`
+}
+
+type outageConfigRequest struct {
+	ConfirmNode string              `json:"confirm_node"`
+	Config      outageconfig.Config `json:"config"`
+}
+
+type outageSimulationRequest struct {
+	ConfirmNode string `json:"confirm_node"`
+	Scenario    string `json:"scenario"`
+}
+
+type outageSimulationResponse struct {
+	Node       string                  `json:"node"`
+	Simulation outageconfig.Simulation `json:"simulation"`
+}
+
 func (s *Server) Handler() (http.Handler, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
@@ -81,13 +126,139 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("GET /api/v1/session", s.handleSession)
 	mux.HandleFunc("DELETE /api/v1/session", s.handleLogout)
 	mux.Handle("GET /api/v1/status", s.requireSession(http.HandlerFunc(s.handleStatus)))
+	mux.Handle("GET /api/v1/agent-status", s.requireSession(http.HandlerFunc(s.handleAgentStatus)))
 	mux.Handle("POST /api/v1/agent-test", s.requireSession(http.HandlerFunc(s.handleAgentTest)))
-	mux.Handle("POST /api/v1/guest-shutdown", s.requireSession(http.HandlerFunc(s.handleGuestShutdown)))
-	mux.Handle("POST /api/v1/stopall", s.requireSession(http.HandlerFunc(s.handleStopAll)))
-	mux.Handle("POST /api/v1/host-poweroff", s.requireSession(http.HandlerFunc(s.handleHostPoweroff)))
-	mux.Handle("/", s.staticHandler())
+	mux.Handle("GET /api/v1/outage-config", s.requireSession(http.HandlerFunc(s.handleOutageConfig)))
+	mux.Handle("PUT /api/v1/outage-config", s.requireSession(http.HandlerFunc(s.handleSaveOutageConfig)))
+	mux.Handle("POST /api/v1/outage-simulation", s.requireSession(http.HandlerFunc(s.handleOutageSimulation)))
+	mux.Handle("GET /api/v1/guard-events", s.requireSession(http.HandlerFunc(s.handleGuardEvents)))
+	if s.APIOnly {
+		mux.HandleFunc("/", s.handleNotFound)
+	} else {
+		mux.Handle("POST /api/v1/guest-shutdown", s.requireSession(http.HandlerFunc(s.handleGuestShutdown)))
+		mux.Handle("POST /api/v1/stopall", s.requireSession(http.HandlerFunc(s.handleStopAll)))
+		mux.Handle("POST /api/v1/host-poweroff", s.requireSession(http.HandlerFunc(s.handleHostPoweroff)))
+		mux.Handle("/", s.staticHandler())
+	}
 
-	return s.securityHeaders(mux), nil
+	return s.securityHeaders(s.requireAllowedSource(mux)), nil
+}
+
+func (s *Server) handleGuardEvents(writer http.ResponseWriter, request *http.Request) {
+	limit := 50
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			s.writeError(writer, http.StatusBadRequest, fmt.Errorf("event limit must be between 1 and 200"))
+			return
+		}
+		limit = parsed
+	}
+	events, err := guardevents.Read(s.GuardEventFile, 24*time.Hour, limit)
+	if err != nil {
+		s.writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"retention_hours": 24,
+		"events":          events,
+	})
+}
+
+func (s *Server) handleOutageConfig(writer http.ResponseWriter, _ *http.Request) {
+	if s.OutageConfig == nil {
+		s.writeError(writer, http.StatusServiceUnavailable, fmt.Errorf("outage configuration is not enabled"))
+		return
+	}
+	config, err := s.OutageConfig.Load()
+	if err != nil {
+		s.writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, outageConfigResponse{Node: s.Node, Config: config})
+}
+
+func (s *Server) handleSaveOutageConfig(writer http.ResponseWriter, request *http.Request) {
+	if s.OutageConfig == nil {
+		s.writeError(writer, http.StatusServiceUnavailable, fmt.Errorf("outage configuration is not enabled"))
+		return
+	}
+	if request.Header.Get(confirmationHeader) != "save-outage-config:"+s.Node {
+		s.writeError(writer, http.StatusForbidden, fmt.Errorf("exact outage configuration confirmation is required"))
+		return
+	}
+	input, ok := decodeJSON[outageConfigRequest](writer, request, 8192)
+	if !ok {
+		return
+	}
+	if input.ConfirmNode != s.Node {
+		s.writeError(writer, http.StatusBadRequest, fmt.Errorf("node confirmation does not match"))
+		return
+	}
+	current, err := s.OutageConfig.Load()
+	if err != nil {
+		s.writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	candidate := input.Config
+	if candidate.Mode != outageconfig.ModeProduction {
+		s.writeError(writer, http.StatusBadRequest, fmt.Errorf("outage configuration mode must remain %q", outageconfig.ModeProduction))
+		return
+	}
+	candidate.Revision = current.Revision + 1
+	candidate.UpdatedAt = time.Now().UTC()
+	if err := candidate.Validate(); err != nil {
+		s.writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.OutageConfig.Save(candidate); err != nil {
+		s.audit("save-outage-config", 0, false, err)
+		s.writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	s.audit("save-outage-config", 0, true, nil)
+	writeJSON(writer, http.StatusOK, outageConfigResponse{Node: s.Node, Config: candidate})
+}
+
+func (s *Server) handleOutageSimulation(writer http.ResponseWriter, request *http.Request) {
+	if s.OutageConfig == nil {
+		s.writeError(writer, http.StatusServiceUnavailable, fmt.Errorf("outage configuration is not enabled"))
+		return
+	}
+	if request.Header.Get(confirmationHeader) != "simulate-outage:"+s.Node {
+		s.writeError(writer, http.StatusForbidden, fmt.Errorf("exact outage simulation confirmation is required"))
+		return
+	}
+	input, ok := decodeJSON[outageSimulationRequest](writer, request, 4096)
+	if !ok {
+		return
+	}
+	if input.ConfirmNode != s.Node {
+		s.writeError(writer, http.StatusBadRequest, fmt.Errorf("node confirmation does not match"))
+		return
+	}
+	config, err := s.OutageConfig.Load()
+	if err != nil {
+		s.writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
+	defer cancel()
+	status, err := s.Executor.Status(ctx)
+	if err != nil {
+		s.writeError(writer, http.StatusBadGateway, fmt.Errorf("read guests for outage simulation: %w", err))
+		return
+	}
+	simulation, err := outageconfig.Simulate(config, input.Scenario, status.Guests)
+	if err != nil {
+		s.writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	s.audit("simulate-outage", 0, true, nil)
+	writeJSON(writer, http.StatusOK, outageSimulationResponse{
+		Node:       s.Node,
+		Simulation: simulation,
+	})
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, address string) error {
@@ -134,6 +305,71 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusOK, statusResponse{Node: s.Node, Result: result})
+}
+
+func (s *Server) handleNotFound(writer http.ResponseWriter, _ *http.Request) {
+	s.writeError(writer, http.StatusNotFound, fmt.Errorf("not found"))
+}
+
+func (s *Server) handleAgentStatus(writer http.ResponseWriter, request *http.Request) {
+	ctx, cancel := context.WithTimeout(request.Context(), 12*time.Second)
+	defer cancel()
+	status, err := s.Executor.Status(ctx)
+	if err != nil {
+		s.writeError(writer, http.StatusBadGateway, fmt.Errorf("list QEMU guests for agent test: %w", err))
+		return
+	}
+
+	var targets []pvereader.Guest
+	results := make([]agentStatus, 0, len(status.Guests))
+	for _, guest := range status.Guests {
+		if guest.Type != pvereader.GuestQEMU || guest.Template {
+			continue
+		}
+		if guest.Status == "stopped" {
+			results = append(results, agentStatus{VMID: guest.VMID, Status: "stopped"})
+			continue
+		}
+		targets = append(targets, guest)
+	}
+
+	tested := make([]agentStatus, len(targets))
+	limit := make(chan struct{}, 4)
+	var wait sync.WaitGroup
+	for index, guest := range targets {
+		wait.Add(1)
+		go func(index int, guest pvereader.Guest) {
+			defer wait.Done()
+			select {
+			case limit <- struct{}{}:
+				defer func() { <-limit }()
+			case <-ctx.Done():
+				tested[index] = agentStatus{
+					VMID:   guest.VMID,
+					Status: string(pvereader.AgentTimeout),
+					Error:  ctx.Err().Error(),
+				}
+				return
+			}
+
+			agentContext, agentCancel := context.WithTimeout(ctx, 4*time.Second)
+			defer agentCancel()
+			result, testErr := s.Agents.TestAgent(agentContext, guest.VMID)
+			tested[index] = agentStatus{VMID: guest.VMID, Status: string(result)}
+			if testErr != nil {
+				tested[index].Error = testErr.Error()
+			}
+		}(index, guest)
+	}
+	wait.Wait()
+	results = append(results, tested...)
+	sort.Slice(results, func(i, j int) bool { return results[i].VMID < results[j].VMID })
+
+	writeJSON(writer, http.StatusOK, agentStatusResponse{
+		Node:      s.Node,
+		CheckedAt: time.Now().UTC(),
+		Results:   results,
+	})
 }
 
 func (s *Server) handleAgentTest(writer http.ResponseWriter, request *http.Request) {
@@ -280,6 +516,32 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) requireAllowedSource(next http.Handler) http.Handler {
+	if !s.APIOnly || len(s.AllowedSources) == 0 {
+		return next
+	}
+	allowed := make(map[string]struct{}, len(s.AllowedSources))
+	for _, source := range s.AllowedSources {
+		allowed[source] = struct{}{}
+	}
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		host, _, err := net.SplitHostPort(request.RemoteAddr)
+		if err != nil {
+			host = request.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip != nil && ip.IsLoopback() {
+			next.ServeHTTP(writer, request)
+			return
+		}
+		if _, ok := allowed[host]; !ok {
+			s.writeError(writer, http.StatusForbidden, fmt.Errorf("API source is not allowed"))
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
+}
+
 func (s *Server) staticHandler() http.Handler {
 	root := http.Dir(s.WebRoot)
 	files := http.FileServer(root)
@@ -312,10 +574,19 @@ func (s *Server) validate() error {
 		return fmt.Errorf("web username is required")
 	case !validPasswordHash(s.PasswordHash):
 		return fmt.Errorf("web password hash is invalid")
-	case s.WebRoot == "":
+	case !s.APIOnly && s.WebRoot == "":
 		return fmt.Errorf("web root is required")
 	}
-	if info, err := os.Stat(filepath.Join(s.WebRoot, "index.html")); err != nil || info.IsDir() {
+	for _, source := range s.AllowedSources {
+		if net.ParseIP(source) == nil {
+			return fmt.Errorf("allowed API source %q is not an IP address", source)
+		}
+	}
+	if !s.APIOnly {
+		info, err := os.Stat(filepath.Join(s.WebRoot, "index.html"))
+		if err == nil && !info.IsDir() {
+			return nil
+		}
 		return fmt.Errorf("web root %q does not contain index.html", s.WebRoot)
 	}
 	return nil

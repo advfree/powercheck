@@ -1,0 +1,10 @@
+{
+  "model": "APC Back-UPS BK650M2-CH",
+  "rated_watts": 390,
+  "battery_voltage": 12,
+  "battery_capacity_ah": 4.2,
+  "replacement_battery": "APCRBC153",
+  "battery_installed_date": "",
+  "shutdown_budget_seconds": 120,
+  "source_note": "Schneider Electric APCRBC153: 12V 4.2Ah；BK650M2-CH NUT 报告额定输出 390W"
+}

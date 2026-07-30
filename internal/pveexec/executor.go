@@ -33,6 +33,10 @@ type Result struct {
 	Message          string            `json:"message"`
 }
 
+func (e *Executor) SetShutdownTimeout(timeout time.Duration) {
+	e.ShutdownTimeout = timeout
+}
+
 func (e Executor) Status(ctx context.Context) (Result, error) {
 	if err := e.validate(); err != nil {
 		return Result{}, err

@@ -48,12 +48,12 @@ type Action struct {
 }
 
 type Status struct {
-	State                    State
-	OutageStartedAt          *time.Duration
-	NUTEvidenceStartedAt     *time.Duration
-	NetworkEvidenceStartedAt *time.Duration
-	RecoveryCount            int
-	GracefulIssued           bool
-	EmergencyIssued          bool
-	PoweroffIssued           bool
+	State                    State          `json:"state"`
+	OutageStartedAt          *time.Duration `json:"outage_started_at,omitempty"`
+	NUTEvidenceStartedAt     *time.Duration `json:"nut_evidence_started_at,omitempty"`
+	NetworkEvidenceStartedAt *time.Duration `json:"network_evidence_started_at,omitempty"`
+	RecoveryCount            int            `json:"recovery_count"`
+	GracefulIssued           bool           `json:"graceful_issued"`
+	EmergencyIssued          bool           `json:"emergency_issued"`
+	PoweroffIssued           bool           `json:"poweroff_issued"`
 }

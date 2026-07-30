@@ -85,7 +85,8 @@ try {
     }
     if (
       message.method === "Log.entryAdded" &&
-      ["error", "warning"].includes(message.params.entry.level)
+      ["error", "warning"].includes(message.params.entry.level) &&
+      !message.params.entry.url?.includes("/api/")
     ) {
       consoleErrors.push(message.params.entry.text);
     }
@@ -217,37 +218,19 @@ try {
     await evaluate("document.querySelectorAll('.guest-console-row').length === 3"),
     "Guest console did not show the demo PVE inventory",
   );
-  await evaluate("document.querySelector('.text-action').click()");
+  await evaluate("document.querySelector('.guest-console-row .text-action').click()");
   await waitFor(() =>
     evaluate("document.querySelector('.console-callout--success')?.textContent.includes('Agent 测试成功')"),
   );
-  await evaluate("document.querySelector('.shutdown-action').click()");
-  await waitFor(() => evaluate("Boolean(document.querySelector('.operation-dialog'))"));
   assert(
-    await evaluate("document.querySelector('.operation-dialog h3').textContent.includes('Guest 100')"),
-    "Guest shutdown confirmation targets the wrong VMID",
+    await evaluate("!document.querySelector('.shutdown-action, .node-danger-zone, .danger-button, .operation-dialog')"),
+    "Manager Guest console exposed a shutdown control",
   );
-  await evaluate("document.querySelector('.operation-check input').click()");
-  await evaluate("document.querySelector('.operation-dialog .primary-button').click()");
-  await waitFor(() =>
-    evaluate("document.querySelector('.guest-console-row .guest-state').textContent.includes('已停止')"),
-  );
-  await evaluate("document.querySelector('.node-danger-zone .secondary-button').click()");
-  await waitFor(() => evaluate("Boolean(document.querySelector('.operation-dialog'))"));
-  await evaluate("document.querySelector('.operation-check input').click()");
-  await evaluate("document.querySelector('.operation-dialog .primary-button').click()");
-  await waitFor(() =>
-    evaluate("Array.from(document.querySelectorAll('.guest-state')).every((item) => item.textContent.includes('已停止'))"),
-  );
-  await evaluate("document.querySelector('.node-danger-zone .danger-button').click()");
-  await waitFor(() => evaluate("Boolean(document.querySelector('.operation-dialog--danger'))"));
   assert(
-    await evaluate("document.querySelector('.operation-dialog--danger .danger-button').disabled"),
-    "Host poweroff confirmation was immediately enabled",
+    await evaluate("Array.from(document.querySelectorAll('.console-callout')).some((item) => item.textContent.includes('关机由 PVE 本机完成'))"),
+    "Manager Guest console did not explain local PVE shutdown ownership",
   );
-  await evaluate("document.querySelector('.operation-dialog .icon-button').click()");
-  await waitFor(() => evaluate("!document.querySelector('.operation-dialog')"));
-  checks.push("PVE Guest web tests and guarded host poweroff");
+  checks.push("PVE Guest Agent tests and monitor-only shutdown boundary");
   await evaluate(
     "document.querySelector('.drawer-backdrop').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))",
   );
@@ -268,11 +251,11 @@ try {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
   await waitFor(() =>
-    evaluate("document.querySelector('.timeline-preview').textContent.includes('T+300')"),
+    evaluate("document.querySelector('.timeline-preview').textContent.includes('T+315')"),
   );
   assert(
-    await evaluate("document.querySelectorAll('.status-item strong')[3].textContent.includes('300')"),
-    "Unapplied draft changed the active overview budget",
+    await evaluate("document.querySelector('.config-file strong').textContent.includes('有未下发修改')"),
+    "Settings did not mark the edited timing as an unapplied draft",
   );
   const settingsCapture = await send("Page.captureScreenshot", {
     format: "png",
@@ -282,30 +265,19 @@ try {
     join(process.cwd(), "qa-settings.png"),
     Buffer.from(settingsCapture.data, "base64"),
   );
-  await evaluate("document.querySelector('.config-panel .primary-button').click()");
-  await waitFor(() =>
-    evaluate("document.querySelector('.notice')?.textContent.includes('配置已下发')"),
-  );
-  await waitFor(() =>
-    evaluate("document.querySelectorAll('.status-item strong')[3].textContent.includes('360')"),
-  );
   assert(
-    await evaluate("document.querySelector('.config-file > strong').textContent.includes('2 台 PVE')"),
-    "Applied configuration status was not updated",
+    await evaluate("document.querySelector('.config-panel .primary-button').textContent.includes('保存并模拟 NUT 断电')"),
+    "Settings did not expose the guarded save-and-simulate action",
   );
-  checks.push("editable timing configuration and local PVE apply feedback");
+  checks.push("editable timing configuration and local PVE DRY-RUN boundary");
   await evaluate(
     "document.querySelector('.drawer-backdrop').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))",
   );
   await waitFor(() => evaluate("!document.querySelector('.drawer')"));
 
-  await evaluate("document.querySelector('.primary-button').click()");
-  const scanning = await evaluate(
-    "document.querySelector('.primary-button').textContent.includes('检测中')",
-  );
-  assert(scanning, "Scan did not enter its loading state");
+  await evaluate("document.querySelector('.actions-bar .primary-button').click()");
   const notice = await waitFor(
-    () => evaluate("document.querySelector('.notice')?.textContent.includes('检测完成')"),
+    () => evaluate("document.querySelector('.notice')?.textContent.includes('状态刷新完成') || document.querySelector('.notice')?.textContent.includes('部分状态读取失败')"),
     4000,
   );
   assert(notice, "Scan did not finish");

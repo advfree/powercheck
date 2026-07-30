@@ -2,26 +2,58 @@
 
 PowerCheck 是面向 PVE 和常开 Linux 唤醒机的断电保护项目。目前完成了状态机模拟器、假 PVE 执行器、真实只读 Dry-run 和分级解锁的真实 PVE 执行器。
 
-> **v0.2.0 安全边界：** 自动 NUT + 网络停电流程仍为 DRY-RUN；只有
-> “Guest 检测”页面中经过逐级确认的人工按钮会执行真实 PVE 命令。当前
-> PVE Web 服务仍以 root 运行，只能通过可信内网、VPN 或受保护的反向代理
-> 访问，禁止直接暴露到公网。
+PowerCheck 的 systemd 服务使用独立的 `powercheck` journald 命名空间。`scripts/powercheck-journald.conf` 默认只保留 1 天日志，持久日志最多占用 20 MB，不会改变其他系统服务的日志保留策略。
+
+Ubuntu Manager 的“最近事件”来自真实后端事件文件，而不是前端示例数据。默认文件为 `~/.local/state/powercheck/events.jsonl`，权限为 `0600`，只保留最近 24 小时的 UPS/PVE 状态变化、Agent 检测、WOL、配置和模拟记录。
+
+> **正式部署安全边界：** 现场 PVE 在本机运行真实自动 Guard；Manager 的
+> 断电模拟接口仍为 DRY-RUN。PVE Guard 只有在本机服务显式提供 `-execute`、
+> 节点确认、`-emergency` 和自动守护确认短语后才会执行。PVE API 服务仍
+> 以 root 运行，只能通过可信内网、VPN 或受保护的反向代理访问，禁止直接
+> 暴露到公网。
+
+Ubuntu Manager（默认部署在 `192.168.1.99`）只负责监测和下发配置。它的
+PVE 反向代理只允许会话、状态、Agent 测试、断电配置、Guard 事件和 DRY-RUN 模拟，
+不会转发 Guest 关机、全部关机或宿主机关机请求。真实停电判断与关机执行
+必须留在 PVE 本机。
+
+Manager 所在 Linux 主机可以独立运行 `powercheck-hostguard`。该服务只读取
+NUT 与网络状态，连续 30 秒确认停电后只调用固定白名单中的
+`systemctl poweroff` 关闭本机。它不读取 Guest、不调用 PVE API，也不发送
+SSH、WOL 或远程关机请求；启用时同样要求本机 hostname、`-execute` 和
+`AUTO SHUTDOWN <host>` 精确确认。
+
+需要在 PVE 本机显式启用真实自动守护时，除 `-execute` 和节点精确确认外，
+还必须提供 `-emergency` 与 `-confirm-auto-guard "AUTO SHUTDOWN <node>"`。
+守护模式在 NUT 正常可读时不执行网络 ping；仅当 NUT 不可达时才探测 LAN
+与 WAN，且两类目标全部不可达才形成网络证据。当前现场配置使用 30 秒连续确认、45 秒 Guest
+正常关机窗口，并在首次异常 T+75 秒进入紧急强停，强停后仍会重新检查全部
+Guest，只有全部停止才请求宿主机关机。
 
 ## 第一阶段能验证什么
 
 - NUT 连续报告 `OB/LB` 30 秒后确认停电。
-- NUT 不可达，且内网和多个外网目标全部不可达 60 秒后确认停电。
+- NUT 不可达，且内网和多个外网目标全部不可达 30 秒后确认停电。
 - NUT/NAS 单点故障或仅外网故障不会触发关机。
 - 恢复后连续 3 次健康采样会取消尚未确认的停电。
-- 以首次停电证据为 `T0`，在 `T+240 秒`强制停止剩余 Guest 并请求关闭宿主机。
+- 以首次停电证据为 `T0`，在 `T+75 秒`强制停止剩余 Guest；复检全部停止后
+  请求关闭宿主机，总预算边界为 `T+120 秒`。
 - 守护程序重启后恢复状态，倒计时不会重新开始。
-- 探测可并发执行，同一节点不允许两轮探测重叠。
+- NUT 正常可读时不产生周期性 ping；只有 NUT 失联时并发探测 LAN/WAN。
 - WOL 默认只在 2 分钟窗口内尝试 4 次：0、30、60、90 秒。
+- WOL Magic Packet 由独立 Ubuntu Manager 发送；只能选择其本地配置中登记的设备，
+  且必须通过管理员会话和精确设备确认。
+- Ubuntu Manager 可独立保存 1 天 NUT 负载历史；理论电池能量来自额定电压和 Ah，
+  运行时能量来自当前负载与 NUT 续航估算，两者不会混作实测容量。
 
-PVE 节点首次安装后立即使用内置安全默认值：检测间隔 5 秒、NUT
-确认 30 秒、全网络中断确认 60 秒、总关机预算 300 秒、紧急预留
-60 秒。首次运行不依赖 Web 控制台下发配置；Web 中保存成功的配置
-只会替换节点本地的最后一次有效配置。
+PVE 节点的正式 Guard 配置默认使用：检测间隔 5 秒、NUT 确认 30 秒、
+全网络中断确认 30 秒、总关机预算 120 秒、紧急预留 45 秒、Guest 正常
+关机超时 45 秒。Web
+可把修改后的参数持久化到 `/etc/powercheck/outage-config.json`，并调用
+PVE 本机纯状态机生成一次 `would_run` 时间线。保存配置和执行模拟都不会
+从 Manager 远程执行关机；真实 Guard 只在 PVE 本机运行。
+同一组初始值保存在 `powercheck-outage.example.json`，部署时可复制到上述
+PVE 本地路径。
 
 模拟器使用虚拟时间，完整的 250 秒停电过程会瞬间跑完。
 
@@ -38,13 +70,13 @@ PVE 节点首次安装后立即使用内置安全默认值：检测间隔 5 秒�
 
 第二阶段的所有命令都只是保存在内存中的预期事件。
 
-## 第三阶段能验证什么
+## 只读 Dry-run 工具能验证什么
 
 - 通过 PVE 本机只读 API 命令读取当前节点的 VM、LXC、名称和运行状态。
 - 通过 NUT `upsc` 读取 `ups.status`、电量、电压、负载和运行时间等原始变量。
-- 同一轮并发检测 NUT、PVE、内网和多个外网目标。
+- 并发读取 NUT 与 PVE；仅当 NUT 不可达时再探测内网和多个外网目标。
 - 使用真实 `qm agent <VMID> ping` 无损测试 QEMU Guest Agent。
-- 连续监测时运行真实状态机，但所有关机动作只写入 `would_run`。
+- `powercheck-dryrun` 连续监测时运行真实状态机，但所有关机动作只写入 `would_run`；正式 Guard 是另一独立入口。
 - 读取失败会记录在 `issues`，PVE 读取失败时不会误报“所有 Guest 已停止”。
 - `pve_node` 限制只处理当前独立 PVE 节点，不会混入其他节点 Guest。
 
@@ -214,6 +246,11 @@ sudo powercheck-web-enable
 - 使用 `pvenode stopall --force-stop 0` 安全关闭全部 Guest；
 - 在全部 Guest 已停止后关闭 PVE 宿主机。
 
+在“设备状态”中点击 Dell P7920，可以修改正式 Guard 的断电响应时间，或按
+PVE 本机当前配置执行一次 NUT `OB/LB` 模拟。配置写入和模拟 API 都要求
+管理员会话、精确节点确认和专用确认头；模拟只读取当前 Guest 清单并返回
+`would_run` 字符串，不会调用真实 PVE 写执行器。
+
 网页操作仍由 PVE 本机执行器检查 VMID、节点名和 Guest 状态；同一时间只允许
 一个关机操作。宿主机关机需要单独确认并等待 5 秒。默认监听
 `0.0.0.0:8765`，请只通过学校 VPN、可信内网或受保护的反向代理访问，不要
@@ -289,8 +326,11 @@ sudo powercheck-pve \
 - `internal/pveweb`：带登录认证、请求确认和单操作锁的本机 PVE Web API。
 - `internal/probe`：带超时、并发上限和防重叠的探测调度器。
 - `internal/sim`：JSON 场景加载、虚拟时间运行和结果比对。
-- `internal/wol`：有限 WOL 重试窗口计算。
+- `internal/wol`：WOL 配置校验、Magic Packet 发送和有限重试任务。
+- `internal/managerweb`：独立 Ubuntu Manager 的网页、NUT 读取、PVE 代理和受控 WOL API。
+- `internal/upshistory`：NUT 历史持久化、曲线降采样和保守的电池容量评估。
 - `cmd/powercheck-sim`：命令行模拟器。
 - `cmd/powercheck-dryrun`：真实读取、永不关机的命令行程序。
 - `cmd/powercheck-pve`：需要分级确认参数的真实 PVE 关机测试程序。
+- `cmd/powercheck-hostguard`：只关闭 Manager 所在 Linux 主机的本地自动保护。
 - `PVE_POWER_V0.1_REQUIREMENTS.md`：v0.1 需求文档。

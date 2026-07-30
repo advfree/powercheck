@@ -11,10 +11,10 @@
   "pve_command_timeout_seconds": 3,
   "guest_shutdown_timeout_seconds": 180,
   "pve_node": "pve",
-  "nut_target": "ups@192.168.1.10",
+  "nut_target": "ups@192.168.1.200",
   "lan_targets": [
     "192.168.1.1",
-    "192.168.1.10"
+    "192.168.1.200"
   ],
   "wan_targets": [
     "223.5.5.5",

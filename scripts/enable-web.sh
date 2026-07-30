@@ -4,9 +4,12 @@ set -eu
 BINARY="/usr/local/bin/powercheck-pve"
 WEB_ROOT="/usr/local/share/powercheck/web"
 ACCOUNT_FILE="/etc/powercheck/web-account.json"
+OUTAGE_CONFIG="/etc/powercheck/outage-config.json"
 LEGACY_PASSWORD_FILE="/etc/powercheck/web-password"
 UNIT_FILE="/etc/systemd/system/powercheck-pve-web.service"
 LISTEN="${POWERCHECK_WEB_LISTEN:-0.0.0.0:8765}"
+API_ONLY="${POWERCHECK_WEB_API_ONLY:-0}"
+API_ALLOW_SOURCE="${POWERCHECK_WEB_API_ALLOW_SOURCE:-}"
 RESET_PASSWORD=0
 
 say() {
@@ -27,7 +30,15 @@ esac
 
 [ "$(id -u)" -eq 0 ] || fail "run with sudo"
 [ -x "$BINARY" ] || fail "missing ${BINARY}; run powercheck-update first"
-[ -f "${WEB_ROOT}/index.html" ] || fail "missing web assets; run powercheck-update first"
+[ "$API_ONLY" = "0" ] || [ "$API_ONLY" = "1" ] || fail "POWERCHECK_WEB_API_ONLY must be 0 or 1"
+if [ "$API_ONLY" = "0" ]; then
+  [ -f "${WEB_ROOT}/index.html" ] || fail "missing web assets; run powercheck-update first"
+elif [ -z "$API_ALLOW_SOURCE" ]; then
+  fail "POWERCHECK_WEB_API_ALLOW_SOURCE is required in API-only mode"
+fi
+case "$API_ALLOW_SOURCE" in
+  *[!0-9A-Fa-f:.,]*) fail "POWERCHECK_WEB_API_ALLOW_SOURCE must contain only IP addresses" ;;
+esac
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
 command -v od >/dev/null 2>&1 || fail "od is required"
 command -v hostname >/dev/null 2>&1 || fail "hostname is required"
@@ -69,20 +80,28 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+description="PowerCheck PVE Web Console"
+api_only_flag=""
+if [ "$API_ONLY" = "1" ]; then
+  description="PowerCheck PVE API"
+  api_only_flag=" -api-only -api-allow-source ${API_ALLOW_SOURCE}"
+fi
+
 {
   printf '%s\n' \
     '[Unit]' \
-    'Description=PowerCheck PVE Web Console' \
+    "Description=${description}" \
     'After=network-online.target pve-cluster.service' \
     'Wants=network-online.target' \
     '' \
     '[Service]' \
     'Type=simple' \
-    "ExecStart=${BINARY} -action web -node ${node} -confirm-node ${node} -timeout 180 -listen ${LISTEN} -web-root ${WEB_ROOT} -web-account-file ${ACCOUNT_FILE} -execute" \
+    "ExecStart=${BINARY} -action web -node ${node} -confirm-node ${node} -timeout 180 -listen ${LISTEN} -web-root ${WEB_ROOT} -web-account-file ${ACCOUNT_FILE} -outage-config ${OUTAGE_CONFIG} -guard-event-file /var/lib/powercheck/guard-events.jsonl${api_only_flag} -execute" \
     'Restart=on-failure' \
     'RestartSec=5' \
     'User=root' \
     'UMask=0077' \
+    'LogNamespace=powercheck' \
     'NoNewPrivileges=true' \
     'PrivateTmp=true' \
     'ProtectHome=true' \
@@ -96,7 +115,11 @@ systemctl daemon-reload
 systemctl enable powercheck-pve-web.service
 systemctl restart powercheck-pve-web.service
 
-say "PowerCheck Web is running on ${LISTEN} for node ${node}."
+if [ "$API_ONLY" = "1" ]; then
+  say "PowerCheck PVE API is running on ${LISTEN} for node ${node}; web assets are not served."
+else
+  say "PowerCheck Web is running on ${LISTEN} for node ${node}."
+fi
 say "Username: admin"
 if [ -n "$created_password" ]; then
   say "Initial password: ${created_password}"

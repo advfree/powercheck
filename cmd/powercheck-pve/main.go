@@ -15,15 +15,22 @@ import (
 	"time"
 
 	"powercheck/internal/buildinfo"
+	"powercheck/internal/core"
+	"powercheck/internal/dryrun"
+	"powercheck/internal/guardevents"
+	"powercheck/internal/guardstate"
+	"powercheck/internal/nutreader"
+	"powercheck/internal/outageconfig"
 	"powercheck/internal/pveexec"
 	"powercheck/internal/pvereader"
 	"powercheck/internal/pveweb"
+	"powercheck/internal/reachability"
 	"powercheck/internal/readonlyexec"
 )
 
 func main() {
 	var (
-		action          = flag.String("action", "status", "status, agent-test, guest-shutdown, stopall, force-stop, host-poweroff, or web")
+		action          = flag.String("action", "status", "status, agent-test, guest-shutdown, stopall, force-stop, host-poweroff, guard, or web")
 		node            = flag.String("node", "", "local PVE node name")
 		vmid            = flag.Int("vmid", 0, "target VM or container ID")
 		timeoutSeconds  = flag.Int("timeout", 180, "graceful guest shutdown timeout in seconds")
@@ -35,6 +42,19 @@ func main() {
 		listen          = flag.String("listen", "127.0.0.1:8765", "web console listen address")
 		webRoot         = flag.String("web-root", "/usr/local/share/powercheck/web", "directory containing the web console")
 		webAccountFile  = flag.String("web-account-file", "/etc/powercheck/web-account.json", "root-readable web account file")
+		outageConfig    = flag.String("outage-config", "/etc/powercheck/outage-config.json", "persistent outage timing configuration")
+		guardState      = flag.String("guard-state", "/var/lib/powercheck/guard-state.json", "automatic guard state file")
+		guardEventFile  = flag.String("guard-event-file", "/var/lib/powercheck/guard-events.jsonl", "automatic guard event history")
+		apiOnly         = flag.Bool("api-only", false, "serve the PVE API without web console assets")
+		apiAllowSource  = flag.String("api-allow-source", "", "comma-separated source IPs allowed to access API-only mode")
+		guardConfirm    = flag.String("confirm-auto-guard", "", `must exactly equal "AUTO SHUTDOWN <node>" for guard mode`)
+		guardNUTTarget  = flag.String("guard-nut-target", "ups@192.168.1.200", "NUT target for local automatic guard")
+		guardLANTargets = flag.String("guard-lan-targets", "192.168.1.1,192.168.1.200", "comma-separated LAN targets for local automatic guard")
+		guardWANTargets = flag.String("guard-wan-targets", "1.1.1.1,223.5.5.5", "comma-separated WAN targets for local automatic guard")
+		guardInterval   = flag.Int("guard-interval", 5, "automatic guard sample interval in seconds")
+		guardConfirmSec = flag.Int("guard-confirm", 30, "continuous outage confirmation time in seconds")
+		guardBudget     = flag.Int("guard-budget", 120, "automatic guard total shutdown budget in seconds")
+		guardReserve    = flag.Int("guard-emergency-reserve", 45, "automatic guard emergency reserve in seconds")
 		versionOnly     = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -68,7 +88,7 @@ func main() {
 
 	readRunner := readonlyexec.OSRunner{GOOS: runtime.GOOS}
 	reader := pvereader.Client{Runner: readRunner, Node: *node}
-	executor := pveexec.Executor{
+	executor := &pveexec.Executor{
 		Runner:          pveexec.OSRunner{},
 		Guests:          reader,
 		Node:            *node,
@@ -83,19 +103,95 @@ func main() {
 			exitError(err)
 		}
 		server := pveweb.Server{
-			Node:         *node,
-			Executor:     executor,
-			Agents:       reader,
-			Username:     account.Username,
-			PasswordHash: account.PasswordHash,
-			WebRoot:      *webRoot,
-			Logger:       log.New(os.Stdout, "powercheck-web ", log.LstdFlags|log.LUTC),
-			ActionLimit:  time.Duration(*timeoutSeconds+30) * time.Second,
+			Node:           *node,
+			Executor:       executor,
+			Agents:         reader,
+			OutageConfig:   outageconfig.Store{Path: *outageConfig},
+			Username:       account.Username,
+			PasswordHash:   account.PasswordHash,
+			WebRoot:        *webRoot,
+			APIOnly:        *apiOnly,
+			AllowedSources: splitTargets(*apiAllowSource),
+			GuardEventFile: *guardEventFile,
+			Logger:         log.New(os.Stdout, "powercheck-web ", log.LstdFlags|log.LUTC),
+			ActionLimit:    time.Duration(*timeoutSeconds+30) * time.Second,
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		fmt.Printf("PowerCheck PVE web console listening on http://%s for node %s\n", *listen, *node)
+		mode := "web console"
+		if *apiOnly {
+			mode = "API"
+		}
+		fmt.Printf("PowerCheck PVE %s listening on http://%s for node %s\n", mode, *listen, *node)
 		if err := server.ListenAndServe(ctx, *listen); err != nil {
+			exitError(err)
+		}
+		return
+	}
+	if *action == "guard" {
+		requireLinuxExecution(*execute)
+		requireNodeConfirmation(*node, *confirmNode)
+		if !*emergency {
+			exitError(fmt.Errorf("-emergency is required for automatic guard force-stop fallback"))
+		}
+		if *guardConfirm != "AUTO SHUTDOWN "+*node {
+			exitError(fmt.Errorf("-confirm-auto-guard must exactly equal %q", "AUTO SHUTDOWN "+*node))
+		}
+		configStore := outageconfig.Store{Path: *outageConfig}
+		storedConfig, err := configStore.Load()
+		if err != nil {
+			exitError(fmt.Errorf("load automatic guard configuration: %w", err))
+		}
+		if storedConfig.Mode != outageconfig.ModeProduction {
+			exitError(fmt.Errorf("automatic guard requires outage configuration mode %q", outageconfig.ModeProduction))
+		}
+		config := dryrun.Config{
+			Detection: core.Config{
+				Interval:             time.Duration(*guardInterval) * time.Second,
+				NUTConfirm:           time.Duration(*guardConfirmSec) * time.Second,
+				NetworkConfirm:       time.Duration(*guardConfirmSec) * time.Second,
+				TotalBudget:          time.Duration(*guardBudget) * time.Second,
+				EmergencyReserve:     time.Duration(*guardReserve) * time.Second,
+				RecoverySuccessCount: 3,
+			},
+			RoundTimeout:                4 * time.Second,
+			PingTimeout:                 time.Second,
+			PVECommandTimeout:           3 * time.Second,
+			GuestShutdownTimeoutSeconds: int64(*timeoutSeconds),
+			PVENode:                     *node,
+			NUTTarget:                   *guardNUTTarget,
+			LANTargets:                  splitTargets(*guardLANTargets),
+			WANTargets:                  splitTargets(*guardWANTargets),
+		}
+		config.Detection = storedConfig.Detection()
+		config.GuestShutdownTimeoutSeconds = storedConfig.GuestShutdownTimeoutSeconds
+		if err := config.Validate(); err != nil {
+			exitError(fmt.Errorf("validate automatic guard configuration: %w", err))
+		}
+		nut := nutreader.Client{Runner: readRunner, Target: config.NUTTarget}
+		ping := reachability.Prober{
+			Runner:  readRunner,
+			Timeout: config.PingTimeout,
+			GOOS:    runtime.GOOS,
+		}
+		collector, err := dryrun.NewCollector(config, reader, nut, ping)
+		if err != nil {
+			exitError(err)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		logger := log.New(os.Stdout, "powercheck-guard ", log.LstdFlags|log.LUTC)
+		if err := runAutoGuard(
+			ctx,
+			config,
+			storedConfig.Revision,
+			configStore,
+			guardstate.Store{Path: *guardState},
+			&guardevents.Store{Path: *guardEventFile, Retention: 24 * time.Hour},
+			collector,
+			executor,
+			logger,
+		); err != nil {
 			exitError(err)
 		}
 		return
@@ -201,6 +297,16 @@ func errorText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func splitTargets(raw string) []string {
+	var targets []string
+	for _, item := range strings.Split(raw, ",") {
+		if value := strings.TrimSpace(item); value != "" {
+			targets = append(targets, value)
+		}
+	}
+	return targets
 }
 
 type webAccount struct {

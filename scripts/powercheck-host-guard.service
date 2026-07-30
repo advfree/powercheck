@@ -1,0 +1,19 @@
+[Unit]
+Description=PowerCheck local Linux host outage guard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/powercheck-hostguard -host ubuntuwake -confirm-host ubuntuwake -confirm-auto-guard "AUTO SHUTDOWN ubuntuwake" -execute -state /var/lib/powercheck/host-guard-state.json -nut-address 192.168.1.200:3493 -lan-targets 192.168.1.1,192.168.1.200,192.168.1.66 -wan-targets 223.5.5.5,119.29.29.29 -interval 5 -confirm 30
+Restart=on-failure
+RestartSec=5
+User=root
+UMask=0077
+LogNamespace=powercheck
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

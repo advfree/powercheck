@@ -103,25 +103,26 @@ func (c Collector) Collect(parent context.Context) Report {
 		nutChannel <- nutResult{reading: reading, err: err}
 	}()
 
-	var wait sync.WaitGroup
-	for index, target := range c.Config.LANTargets {
-		wait.Add(1)
-		go func(i int, value string) {
-			defer wait.Done()
-			report.LAN[i] = c.Ping.Probe(ctx, value)
-		}(index, target)
-	}
-	for index, target := range c.Config.WANTargets {
-		wait.Add(1)
-		go func(i int, value string) {
-			defer wait.Done()
-			report.WAN[i] = c.Ping.Probe(ctx, value)
-		}(index, target)
-	}
-
 	pveData := <-pveChannel
 	nutData := <-nutChannel
-	wait.Wait()
+	if nutData.err != nil {
+		var wait sync.WaitGroup
+		for index, target := range c.Config.LANTargets {
+			wait.Add(1)
+			go func(i int, value string) {
+				defer wait.Done()
+				report.LAN[i] = c.Ping.Probe(ctx, value)
+			}(index, target)
+		}
+		for index, target := range c.Config.WANTargets {
+			wait.Add(1)
+			go func(i int, value string) {
+				defer wait.Done()
+				report.WAN[i] = c.Ping.Probe(ctx, value)
+			}(index, target)
+		}
+		wait.Wait()
+	}
 
 	report.Guests = pveData.guests
 	report.PVEAvailable = pveData.err == nil
@@ -144,10 +145,16 @@ func (c Collector) Collect(parent context.Context) Report {
 		}
 	}
 
+	lanReachable := true
+	wanReachable := true
+	if nutData.err != nil {
+		lanReachable = anyReachable(report.LAN)
+		wanReachable = anyReachable(report.WAN)
+	}
 	report.Snapshot = core.Snapshot{
 		NUT:              report.NUT.Status,
-		LANReachable:     anyReachable(report.LAN),
-		WANReachable:     anyReachable(report.WAN),
+		LANReachable:     lanReachable,
+		WANReachable:     wanReachable,
 		AllGuestsStopped: report.PVEAvailable && pvereader.AllGuestsStopped(report.Guests),
 	}
 	report.CollectionTimeMS = time.Since(started).Milliseconds()

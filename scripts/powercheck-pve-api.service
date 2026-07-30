@@ -1,0 +1,19 @@
+[Unit]
+Description=PowerCheck PVE API-only service
+After=network-online.target pve-cluster.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/powercheck-pve -action web -node pve -confirm-node pve -timeout 180 -listen 0.0.0.0:8765 -web-root /usr/local/share/powercheck/web -web-account-file /etc/powercheck/web-account.json -outage-config /etc/powercheck/outage-config.json -guard-event-file /var/lib/powercheck/guard-events.jsonl -api-only -api-allow-source 192.168.1.99 -execute
+Restart=on-failure
+RestartSec=5
+User=root
+UMask=0077
+LogNamespace=powercheck
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
