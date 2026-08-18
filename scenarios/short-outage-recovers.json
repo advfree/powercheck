@@ -1,0 +1,30 @@
+{
+  "name": "short outage recovers",
+  "description": "全网不可达 30 秒后恢复，连续 3 次健康采样后取消停电候选。",
+  "duration_seconds": 60,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "UNREACHABLE",
+      "lan_reachable": false,
+      "wan_reachable": false,
+      "all_guests_stopped": false
+    },
+    {
+      "at_seconds": 30,
+      "nut": "OL",
+      "lan_reachable": true,
+      "wan_reachable": true
+    }
+  ],
+  "expected_actions": [
+    {
+      "at_seconds": 0,
+      "kind": "outage_candidate_started"
+    },
+    {
+      "at_seconds": 40,
+      "kind": "outage_cancelled"
+    }
+  ]
+}

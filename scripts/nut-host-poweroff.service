@@ -1,0 +1,7 @@
+[Unit]
+Description=Power off this host after an immediate NUT ONBATT event
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -t nut-host-shutdown "Starting host shutdown requested by NUT"
+ExecStart=/usr/bin/systemctl poweroff

@@ -1,0 +1,135 @@
+{
+  "name": "fake PVE graceful shutdown order",
+  "description": "业务 VM、Windows 和 LXC 先关闭，依赖存储的 TrueNAS 最后关闭；全部停止后才请求关闭宿主机。",
+  "duration_seconds": 100,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "OB",
+      "lan_reachable": true,
+      "wan_reachable": true
+    }
+  ],
+  "fake_pve": {
+    "stop_all_timeout_seconds": 180,
+    "guests": [
+      {
+        "id": 300,
+        "name": "truenas",
+        "kind": "vm",
+        "shutdown_order": 100,
+        "agent_enabled": true,
+        "agent_probe": "success",
+        "graceful_result": "stopped",
+        "graceful_delay_seconds": 60
+      },
+      {
+        "id": 101,
+        "name": "windows",
+        "kind": "vm",
+        "shutdown_order": 20,
+        "agent_enabled": false,
+        "graceful_result": "stopped",
+        "graceful_delay_seconds": 40
+      },
+      {
+        "id": 200,
+        "name": "dns",
+        "kind": "lxc",
+        "shutdown_order": 30,
+        "graceful_result": "stopped",
+        "graceful_delay_seconds": 10
+      },
+      {
+        "id": 100,
+        "name": "app",
+        "kind": "vm",
+        "shutdown_order": 10,
+        "agent_enabled": true,
+        "agent_probe": "success",
+        "graceful_result": "stopped",
+        "graceful_delay_seconds": 20
+      }
+    ]
+  },
+  "expected_actions": [
+    {
+      "at_seconds": 0,
+      "kind": "outage_candidate_started"
+    },
+    {
+      "at_seconds": 30,
+      "kind": "graceful_shutdown"
+    },
+    {
+      "at_seconds": 90,
+      "kind": "host_poweroff_requested"
+    }
+  ],
+  "expected_pve_events": [
+    {
+      "at_seconds": 30,
+      "kind": "pvenode_stopall",
+      "command": "pvenode stopall --force-stop 0 --timeout 180",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 30,
+      "kind": "guest_shutdown_requested",
+      "guest_id": 100,
+      "method": "qemu_guest_agent",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 30,
+      "kind": "guest_shutdown_requested",
+      "guest_id": 101,
+      "method": "acpi",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 30,
+      "kind": "guest_shutdown_requested",
+      "guest_id": 200,
+      "method": "lxc_shutdown",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 30,
+      "kind": "guest_shutdown_requested",
+      "guest_id": 300,
+      "method": "qemu_guest_agent",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 40,
+      "kind": "guest_stopped",
+      "guest_id": 200,
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 50,
+      "kind": "guest_stopped",
+      "guest_id": 100,
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 70,
+      "kind": "guest_stopped",
+      "guest_id": 101,
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 90,
+      "kind": "guest_stopped",
+      "guest_id": 300,
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 90,
+      "kind": "host_poweroff",
+      "command": "systemctl poweroff",
+      "outcome": "success"
+    }
+  ]
+}

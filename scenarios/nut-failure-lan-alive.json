@@ -1,0 +1,15 @@
+{
+  "name": "NUT unavailable while LAN remains reachable",
+  "description": "NAS 或 NUT 故障，但内网目标仍可达，不触发关机。",
+  "duration_seconds": 90,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "UNREACHABLE",
+      "lan_reachable": true,
+      "wan_reachable": true,
+      "all_guests_stopped": false
+    }
+  ],
+  "expected_actions": []
+}

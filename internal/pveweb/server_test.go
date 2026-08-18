@@ -1,0 +1,479 @@
+package pveweb
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"powercheck/internal/outageconfig"
+	"powercheck/internal/pveexec"
+	"powercheck/internal/pvereader"
+)
+
+type fakeBackend struct {
+	mu       sync.Mutex
+	guests   []pvereader.Guest
+	actions  []string
+	block    chan struct{}
+	poweroff bool
+}
+
+func (b *fakeBackend) Status(context.Context) (pveexec.Result, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	guests := append([]pvereader.Guest(nil), b.guests...)
+	return pveexec.Result{
+		Action:           "status",
+		Guests:           guests,
+		AllGuestsStopped: pvereader.AllGuestsStopped(guests),
+	}, nil
+}
+
+func (b *fakeBackend) TestAgent(context.Context, int) (pvereader.AgentTestResult, error) {
+	return pvereader.AgentSuccess, nil
+}
+
+func (b *fakeBackend) ShutdownGuest(_ context.Context, vmid int) (pveexec.Result, error) {
+	b.mu.Lock()
+	b.actions = append(b.actions, "guest-shutdown")
+	for index := range b.guests {
+		if b.guests[index].VMID == vmid {
+			b.guests[index].Status = "stopped"
+		}
+	}
+	b.mu.Unlock()
+	if b.block != nil {
+		<-b.block
+	}
+	return pveexec.Result{Action: "guest-shutdown", Executed: true}, nil
+}
+
+func (b *fakeBackend) StopAll(context.Context) (pveexec.Result, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.actions = append(b.actions, "stopall")
+	for index := range b.guests {
+		b.guests[index].Status = "stopped"
+	}
+	return pveexec.Result{Action: "stopall", Executed: true, AllGuestsStopped: true}, nil
+}
+
+func (b *fakeBackend) PoweroffHost(context.Context) (pveexec.Result, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.actions = append(b.actions, "host-poweroff")
+	if !pvereader.AllGuestsStopped(b.guests) {
+		return pveexec.Result{}, errors.New("guests still running")
+	}
+	b.poweroff = true
+	return pveexec.Result{Action: "host-poweroff", Executed: true}, nil
+}
+
+func TestServerRequiresAuthentication(t *testing.T) {
+	server, _ := testServer(t, &fakeBackend{})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAPIOnlyDoesNotServeWebAssets(t *testing.T) {
+	backend := &fakeBackend{}
+	passwordHash, err := HashPassword("a-secure-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Node:         "pve",
+		Executor:     backend,
+		Agents:       backend,
+		Username:     "admin",
+		PasswordHash: passwordHash,
+		APIOnly:      true,
+	}
+	handler, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/index.html", "/assets/app.js"} {
+		response := doRequest(t, handler, http.MethodGet, path, "", nil, false)
+		if response.Code != http.StatusNotFound ||
+			!strings.Contains(response.Body.String(), `"error":"not found"`) {
+			t.Fatalf("path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	session := doRequest(t, handler, http.MethodGet, "/api/v1/session", "", nil, false)
+	if session.Code != http.StatusUnauthorized {
+		t.Fatalf("session status=%d body=%s", session.Code, session.Body.String())
+	}
+	for _, path := range []string{"/api/v1/guest-shutdown", "/api/v1/stopall", "/api/v1/host-poweroff"} {
+		response := doRequest(t, handler, http.MethodPost, path, `{}`, nil, true)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("write route %s remains available: status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestAPIOnlyRestrictsSourceAddress(t *testing.T) {
+	backend := &fakeBackend{}
+	passwordHash, err := HashPassword("a-secure-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Node:           "pve",
+		Executor:       backend,
+		Agents:         backend,
+		Username:       "admin",
+		PasswordHash:   passwordHash,
+		APIOnly:        true,
+		AllowedSources: []string{"192.0.2.10"},
+	}
+	handler, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	request.RemoteAddr = "192.0.2.40:12345"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	request.RemoteAddr = "192.0.2.10:12345"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("allowed source status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestLoginSessionAndLogout(t *testing.T) {
+	server, _ := testServer(t, &fakeBackend{})
+	wrong := doRequest(t, server, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong-password"}`, nil, false)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status=%d body=%s", wrong.Code, wrong.Body.String())
+	}
+	cookie := login(t, server)
+	current := doRequest(t, server, http.MethodGet, "/api/v1/session", "", cookie, false)
+	if current.Code != http.StatusOK ||
+		!strings.Contains(current.Body.String(), `"username":"admin"`) {
+		t.Fatalf("session status=%d body=%s", current.Code, current.Body.String())
+	}
+	logout := doRequest(t, server, http.MethodDelete, "/api/v1/session", "", cookie, false)
+	if logout.Code != http.StatusOK {
+		t.Fatalf("logout status=%d body=%s", logout.Code, logout.Body.String())
+	}
+	after := doRequest(t, server, http.MethodGet, "/api/v1/status", "", cookie, false)
+	if after.Code != http.StatusUnauthorized {
+		t.Fatalf("expired session status=%d body=%s", after.Code, after.Body.String())
+	}
+}
+
+func TestLoginTemporarilyBlocksRepeatedFailures(t *testing.T) {
+	server, _ := testServer(t, &fakeBackend{})
+	for attempt := 0; attempt < loginFailureLimit; attempt++ {
+		response := doRequest(t, server, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"wrong-password"}`, nil, false)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt=%d status=%d body=%s", attempt+1, response.Code, response.Body.String())
+		}
+	}
+	blocked := doRequest(t, server, http.MethodPost, "/api/v1/session", `{"username":"admin","password":"a-secure-test-password"}`, nil, false)
+	if blocked.Code != http.StatusTooManyRequests {
+		t.Fatalf("blocked status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+}
+
+func TestStatusAndAgentTestAreAvailableThroughSession(t *testing.T) {
+	backend := &fakeBackend{guests: []pvereader.Guest{
+		{VMID: 100, Name: "windows", Type: pvereader.GuestQEMU, Status: "running", Node: "pve"},
+		{VMID: 101, Name: "offline", Type: pvereader.GuestQEMU, Status: "stopped", Node: "pve"},
+		{VMID: 200, Name: "dns", Type: pvereader.GuestLXC, Status: "running", Node: "pve"},
+	}}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+
+	response := doRequest(t, server, http.MethodGet, "/api/v1/status", "", cookie, false)
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"vmid":100`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response = doRequest(t, server, http.MethodGet, "/api/v1/agent-status", "", cookie, false)
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"vmid":100,"status":"success"`) ||
+		!strings.Contains(response.Body.String(), `"vmid":101,"status":"stopped"`) ||
+		strings.Contains(response.Body.String(), `"vmid":200`) {
+		t.Fatalf("agent status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response = doRequest(t, server, http.MethodPost, "/api/v1/agent-test", `{"vmid":100}`, cookie, true)
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"agent_result":"success"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOutageConfigPersistsAndSimulationNeverExecutes(t *testing.T) {
+	backend := &fakeBackend{guests: []pvereader.Guest{
+		{VMID: 100, Type: pvereader.GuestQEMU, Status: "running", Node: "pve"},
+		{VMID: 200, Type: pvereader.GuestLXC, Status: "running", Node: "pve"},
+	}}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+
+	current := doRequest(t, server, http.MethodGet, "/api/v1/outage-config", "", cookie, false)
+	if current.Code != http.StatusOK ||
+		!strings.Contains(current.Body.String(), `"mode":"production"`) ||
+		!strings.Contains(current.Body.String(), `"nut_confirm_seconds":30`) {
+		t.Fatalf("config status=%d body=%s", current.Code, current.Body.String())
+	}
+
+	config := outageconfig.Default()
+	config.NUTConfirmSeconds = 45
+	body, err := json.Marshal(outageConfigRequest{ConfirmNode: "pve", Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingHeader := doRequest(t, server, http.MethodPut, "/api/v1/outage-config", string(body), cookie, false)
+	if missingHeader.Code != http.StatusForbidden {
+		t.Fatalf("missing header status=%d body=%s", missingHeader.Code, missingHeader.Body.String())
+	}
+	saved := doActionRequest(
+		t,
+		server,
+		http.MethodPut,
+		"/api/v1/outage-config",
+		string(body),
+		cookie,
+		"save-outage-config:pve",
+	)
+	if saved.Code != http.StatusOK ||
+		!strings.Contains(saved.Body.String(), `"revision":1`) ||
+		!strings.Contains(saved.Body.String(), `"nut_confirm_seconds":45`) {
+		t.Fatalf("save status=%d body=%s", saved.Code, saved.Body.String())
+	}
+
+	simulation := doActionRequest(
+		t,
+		server,
+		http.MethodPost,
+		"/api/v1/outage-simulation",
+		`{"confirm_node":"pve","scenario":"nut-ob"}`,
+		cookie,
+		"simulate-outage:pve",
+	)
+	if simulation.Code != http.StatusOK ||
+		!strings.Contains(simulation.Body.String(), `"mode":"dry-run"`) ||
+		!strings.Contains(simulation.Body.String(), `"at_seconds":45`) ||
+		!strings.Contains(simulation.Body.String(), `"would_run":["pvenode stopall --force-stop 0 --timeout 45"]`) {
+		t.Fatalf("simulation status=%d body=%s", simulation.Code, simulation.Body.String())
+	}
+	if len(backend.actions) != 0 || backend.poweroff {
+		t.Fatalf("simulation executed backend actions: %#v poweroff=%v", backend.actions, backend.poweroff)
+	}
+}
+
+func TestAgentTestRejectsLXCAndUnknownTargets(t *testing.T) {
+	backend := &fakeBackend{guests: []pvereader.Guest{
+		{VMID: 200, Name: "dns", Type: pvereader.GuestLXC, Status: "running", Node: "pve"},
+	}}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+	for _, vmid := range []int{200, 999} {
+		response := doRequest(t, server, http.MethodPost, "/api/v1/agent-test", fmt.Sprintf(`{"vmid":%d}`, vmid), cookie, true)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("vmid=%d status=%d body=%s", vmid, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestWriteActionRequiresHeaderAndMatchingConfirmation(t *testing.T) {
+	backend := &fakeBackend{guests: []pvereader.Guest{
+		{VMID: 100, Type: pvereader.GuestQEMU, Status: "running"},
+	}}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+
+	response := doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, cookie, false)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing header status=%d", response.Code)
+	}
+	response = doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":101}`, cookie, true)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("wrong confirmation status=%d", response.Code)
+	}
+	if len(backend.actions) != 0 {
+		t.Fatalf("action ran without valid confirmation: %#v", backend.actions)
+	}
+
+	response = doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, cookie, true)
+	if response.Code != http.StatusOK || len(backend.actions) != 1 {
+		t.Fatalf("status=%d actions=%#v body=%s", response.Code, backend.actions, response.Body.String())
+	}
+}
+
+func TestHostPoweroffRequiresTypedPhrase(t *testing.T) {
+	backend := &fakeBackend{guests: []pvereader.Guest{
+		{VMID: 100, Type: pvereader.GuestQEMU, Status: "stopped"},
+	}}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+	wrong := `{"confirm_node":"pve","confirm_poweroff":"POWER OFF"}`
+	response := doRequest(t, server, http.MethodPost, "/api/v1/host-poweroff", wrong, cookie, true)
+	if response.Code != http.StatusBadRequest || backend.poweroff {
+		t.Fatalf("status=%d poweroff=%v", response.Code, backend.poweroff)
+	}
+	right := `{"confirm_node":"pve","confirm_poweroff":"POWER OFF pve"}`
+	response = doRequest(t, server, http.MethodPost, "/api/v1/host-poweroff", right, cookie, true)
+	if response.Code != http.StatusOK || !backend.poweroff {
+		t.Fatalf("status=%d poweroff=%v body=%s", response.Code, backend.poweroff, response.Body.String())
+	}
+}
+
+func TestOnlyOneWriteActionCanRunAtATime(t *testing.T) {
+	block := make(chan struct{})
+	backend := &fakeBackend{
+		guests: []pvereader.Guest{{VMID: 100, Type: pvereader.GuestQEMU, Status: "running"}},
+		block:  block,
+	}
+	server, _ := testServer(t, backend)
+	cookie := login(t, server)
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstDone <- doRequest(t, server, http.MethodPost, "/api/v1/guest-shutdown", `{"vmid":100,"confirm_vmid":100}`, cookie, true)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		backend.mu.Lock()
+		started := len(backend.actions) == 1
+		backend.mu.Unlock()
+		if started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first action did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	second := doRequest(t, server, http.MethodPost, "/api/v1/stopall", `{"confirm_node":"pve"}`, cookie, true)
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second action status=%d body=%s", second.Code, second.Body.String())
+	}
+	close(block)
+	if first := <-firstDone; first.Code != http.StatusOK {
+		t.Fatalf("first action status=%d", first.Code)
+	}
+}
+
+func testServer(t *testing.T, backend *fakeBackend) (http.Handler, *strings.Builder) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<h1>PowerCheck</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	passwordHash, err := HashPassword("a-secure-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Node:         "pve",
+		Executor:     backend,
+		Agents:       backend,
+		OutageConfig: outageconfig.Store{Path: filepath.Join(root, "outage-config.json")},
+		Username:     "admin",
+		PasswordHash: passwordHash,
+		WebRoot:      root,
+		Logger:       log.New(&logs, "", 0),
+		ActionLimit:  time.Second,
+	}
+	handler, err := server.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler, &logs
+}
+
+func doActionRequest(
+	t *testing.T,
+	handler http.Handler,
+	method string,
+	path string,
+	body string,
+	cookie *http.Cookie,
+	action string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(confirmationHeader, action)
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func doRequest(
+	t *testing.T,
+	handler http.Handler,
+	method string,
+	path string,
+	body string,
+	cookie *http.Cookie,
+	confirmed bool,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	if confirmed {
+		request.Header.Set(confirmationHeader, "confirmed")
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func login(t *testing.T, handler http.Handler) *http.Cookie {
+	t.Helper()
+	response := doRequest(
+		t,
+		handler,
+		http.MethodPost,
+		"/api/v1/session",
+		`{"username":"admin","password":"a-secure-test-password"}`,
+		nil,
+		false,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	result := response.Result()
+	for _, cookie := range result.Cookies() {
+		if cookie.Name == sessionCookieName {
+			return cookie
+		}
+	}
+	t.Fatal("login did not return a session cookie")
+	return nil
+}

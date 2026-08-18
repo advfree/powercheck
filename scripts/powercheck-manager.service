@@ -1,0 +1,15 @@
+[Unit]
+Description=PowerCheck Manager Web Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/systemd-cat --namespace=powercheck --identifier=powercheck-manager /opt/powercheck/bin/powercheck-manager -listen 0.0.0.0:8765 -pve-url http://192.0.2.30:8765 -web-root /opt/powercheck/share/web -event-file /var/lib/powercheck/events.jsonl -nut-address 192.0.2.20:3493 -nut-history-file /var/lib/powercheck/ups-history.jsonl -ups-spec /etc/powercheck/ups-spec.json -wol-config /etc/powercheck/wol.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,116 @@
+{
+  "name": "fake PVE QEMU Guest Agent tests",
+  "description": "无损模拟 Web 测试按钮将看到的 Agent 成功、失败、超时、未启用和 LXC 不适用结果。",
+  "duration_seconds": 10,
+  "changes": [
+    {
+      "at_seconds": 0,
+      "nut": "OL",
+      "lan_reachable": true,
+      "wan_reachable": true
+    }
+  ],
+  "fake_pve": {
+    "guests": [
+      {
+        "id": 100,
+        "name": "agent-ok",
+        "kind": "vm",
+        "shutdown_order": 10,
+        "agent_enabled": true,
+        "agent_probe": "success"
+      },
+      {
+        "id": 101,
+        "name": "agent-failed",
+        "kind": "vm",
+        "shutdown_order": 20,
+        "agent_enabled": true,
+        "agent_probe": "failure"
+      },
+      {
+        "id": 102,
+        "name": "agent-timeout",
+        "kind": "vm",
+        "shutdown_order": 30,
+        "agent_enabled": true,
+        "agent_probe": "timeout"
+      },
+      {
+        "id": 103,
+        "name": "agent-disabled",
+        "kind": "vm",
+        "shutdown_order": 40
+      },
+      {
+        "id": 200,
+        "name": "container",
+        "kind": "lxc",
+        "shutdown_order": 50
+      }
+    ]
+  },
+  "agent_tests": [
+    {
+      "at_seconds": 0,
+      "guest_id": 100
+    },
+    {
+      "at_seconds": 0,
+      "guest_id": 101
+    },
+    {
+      "at_seconds": 0,
+      "guest_id": 102
+    },
+    {
+      "at_seconds": 0,
+      "guest_id": 103
+    },
+    {
+      "at_seconds": 0,
+      "guest_id": 200
+    }
+  ],
+  "expected_actions": [],
+  "expected_pve_events": [
+    {
+      "at_seconds": 0,
+      "kind": "agent_test",
+      "guest_id": 100,
+      "method": "qemu_guest_agent",
+      "command": "qm agent 100 ping",
+      "outcome": "success"
+    },
+    {
+      "at_seconds": 0,
+      "kind": "agent_test",
+      "guest_id": 101,
+      "method": "qemu_guest_agent",
+      "command": "qm agent 101 ping",
+      "outcome": "failure"
+    },
+    {
+      "at_seconds": 0,
+      "kind": "agent_test",
+      "guest_id": 102,
+      "method": "qemu_guest_agent",
+      "command": "qm agent 102 ping",
+      "outcome": "timeout"
+    },
+    {
+      "at_seconds": 0,
+      "kind": "agent_test",
+      "guest_id": 103,
+      "method": "qemu_guest_agent",
+      "outcome": "disabled"
+    },
+    {
+      "at_seconds": 0,
+      "kind": "agent_test",
+      "guest_id": 200,
+      "method": "qemu_guest_agent",
+      "outcome": "not_relevant"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+	host-poweroff)
+		/usr/bin/logger -t nut-host-shutdown \
+			"NUT reported ONBATT or a critical UPS event; requesting host shutdown"
+		exec /usr/bin/touch /run/nut/host-poweroff-request
+		;;
+	*)
+		exit 0
+		;;
+esac
