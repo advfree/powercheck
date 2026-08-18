@@ -1,0 +1,41 @@
+name: powercheck
+
+services:
+  manager:
+    image: ghcr.io/advfree/powercheck-manager:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: local
+        COMMIT: local
+        BUILD_DATE: local
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      TZ: ${TZ:-UTC}
+      POWERCHECK_HEALTH_URL: ${POWERCHECK_HEALTH_URL:-http://127.0.0.1:8765/}
+    command:
+      - -listen=${POWERCHECK_MANAGER_LISTEN:-0.0.0.0:8765}
+      - -pve-url=${POWERCHECK_PVE_URL:?Set POWERCHECK_PVE_URL in .env}
+      - -web-root=/app/web
+      - -event-file=/data/events.jsonl
+      - -nut-address=${POWERCHECK_NUT_ADDRESS:-}
+      - -nut-ups=${POWERCHECK_NUT_UPS:-}
+      - -nut-history-file=/data/ups-history.jsonl
+      - -ups-spec=${POWERCHECK_UPS_SPEC:-}
+      - -wol-config=${POWERCHECK_WOL_CONFIG:-}
+    volumes:
+      - powercheck-data:/data
+      - ./docker/config:/config:ro
+
+volumes:
+  powercheck-data:

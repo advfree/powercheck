@@ -77,6 +77,20 @@ npm run test:sites
 
 复制示例文件后再填写真实环境信息。实际配置、密码文件和运行状态不应提交到仓库。
 
+## Docker
+
+Docker 镜像只运行 Manager 和 Web 控制台。PVE Guard 与真实关机命令仍必须直接运行在 PVE/Linux 宿主机上。
+
+```bash
+cp .env.example .env
+# 修改 .env 中的 POWERCHECK_PVE_URL
+docker compose up -d --build
+```
+
+默认使用 Linux host 网络，以便访问 PVE、NUT 和发送 WOL 广播；服务监听 `8765` 端口。事件与 UPS 历史保存在 `powercheck-data` 卷中。可选配置文件放在 `docker/config/`，该目录内容默认不会提交。
+
+预构建镜像：`ghcr.io/advfree/powercheck-manager:latest`
+
 ## 真实操作
 
 先执行只读检查：
@@ -95,4 +109,3 @@ sudo powercheck-pve -node <NODE> -action agent-test -vmid <VMID>
 - `scenarios/`：可重复执行的断电模拟场景。
 - `scripts/`：安装、systemd、NUT 和 Web 启用脚本。
 - `web-prototype/`：Web 控制台源码与测试。
-

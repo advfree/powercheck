@@ -33,6 +33,8 @@ powercheck-state.json
 /powercheck-outage.json
 /web-account.json
 /ups-spec.json
+/docker/config/*
+!/docker/config/.gitkeep
 *.pem
 *.key
 *.p12

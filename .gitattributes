@@ -8,3 +8,5 @@
 *.mjs text eol=lf
 *.jsx text eol=lf
 *.css text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
