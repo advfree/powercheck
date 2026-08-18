@@ -20,7 +20,6 @@ PowerCheck 是面向 Proxmox VE（PVE）和 Linux 主机的断电保护工具。
 - 宿主机关机前必须确认所有 Guest 已停止。
 - Web/API 只应部署在可信内网、VPN 或受保护的反向代理后，禁止直接暴露到公网。
 
-> 仓库中的 `192.0.2.0/24` 地址和 `02:00:00:00:00:xx` MAC 均为示例值。部署时请使用本地配置，不要提交真实凭据、设备地址或网络拓扑。
 
 ## 环境要求
 
@@ -97,6 +96,3 @@ sudo powercheck-pve -node <NODE> -action agent-test -vmid <VMID>
 - `scripts/`：安装、systemd、NUT 和 Web 启用脚本。
 - `web-prototype/`：Web 控制台源码与测试。
 
-## 持续集成
-
-GitHub Actions 会执行 Go 格式检查、`go vet`、全部 Go 测试、Web 构建和发布配置校验。
